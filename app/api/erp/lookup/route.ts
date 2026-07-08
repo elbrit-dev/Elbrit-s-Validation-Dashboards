@@ -6,9 +6,14 @@ import type { ErpSummary } from '@/lib/shared/types'
 // POST { codes: string[] }  — each "code" is a parent key "distributor␟date".
 // Returns { records: { [key]: ErpSummary } } for the create-vs-update decision.
 // We fetch every Secondary Data Entry whose distributor is in the requested set
-// AND whose date is in the requested set, then match exact (distributor, date)
-// pairs — so an existing parent means UPDATE, a missing one means CREATE.
+// AND whose date is in the requested set, then match (distributor, date) pairs
+// CASE-INSENSITIVELY — the sheet has "MARUTHI AGENCIES" but the saved doc holds
+// the canonical Customer "Maruthi Agencies". An existing parent = UPDATE, a
+// missing one = CREATE. Records are returned under the sheet's requested key.
 const MAX_CODES = 100
+
+// Case/space-insensitive distributor key so sheet vs canonical customer match.
+const normDist = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
 
 export async function POST(req: Request) {
   try {
@@ -21,9 +26,14 @@ export async function POST(req: Request) {
   if (keys.length === 0) return NextResponse.json({ records: {}, requested: 0, found: 0 })
   if (keys.length > MAX_CODES) return NextResponse.json({ error: `Max ${MAX_CODES} keys per call` }, { status: 400 })
 
-  const requested = new Set(keys)
   const distributors = [...new Set(keys.map((k) => splitKey(k).distributor))]
   const dates = [...new Set(keys.map((k) => splitKey(k).date))]
+  // Normalized (distributor, date) → the sheet's requested key.
+  const reqByNorm = new Map<string, string>()
+  for (const k of keys) {
+    const { distributor, date } = splitKey(k)
+    reqByNorm.set(`${normDist(distributor)}${KEY_SEP}${date}`, k)
+  }
 
   try {
     const docs = await listDocs(
@@ -38,8 +48,9 @@ export async function POST(req: Request) {
 
     const records: Record<string, ErpSummary> = {}
     for (const d of docs) {
-      const key = `${String(d.distributor ?? '')}${KEY_SEP}${String(d.date ?? '')}`
-      if (!requested.has(key) || records[key]) continue
+      const nk = `${normDist(d.distributor)}${KEY_SEP}${String(d.date ?? '')}`
+      const key = reqByNorm.get(nk)
+      if (!key || records[key]) continue
       const fields: Record<string, string> = {}
       for (const f of ERP_FETCH_FIELDS) fields[f] = d[f] == null ? '' : String(d[f])
       records[key] = { name: String(d.name), code: key, fields }

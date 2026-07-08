@@ -412,28 +412,47 @@ export default function EntryPage() {
   // ---- export -----------------------------------------------------------------
   const doExport = async () => {
     const toRow = (r: RowRec) => ({
-      key: r.key,
+      distributor: distributorOf(r.raw),
+      date: dateOf(r.raw),
       month: r.monthTag,
       file: r.fileName,
+      productSheet: firstValue(r.raw, ['Product', 'Product Code']),
+      itemUat: r.resolvedItem || '',
+      itemStatus: r.itemStatus || '',
       action: r.action || '',
       erpRecord: r.runResultName || r.erpName || '',
       runStatus: r.runStatus || '',
       error: r.runError || '',
-      changedFields: (r.changed || []).map((c) => c.label).join(', '),
       ...r.raw,
     })
+    // Item-name issues: products that could NOT be matched to a UAT Item — these
+    // are left OUT of the written documents; fix the sheet nomenclature for them.
+    const itemIssues = rows
+      .filter((r) => r.itemStatus === 'ambiguous' || r.itemStatus === 'missing')
+      .map((r) => ({
+        distributor: distributorOf(r.raw),
+        date: dateOf(r.raw),
+        month: r.monthTag,
+        productSheet: firstValue(r.raw, ['Product', 'Product Code']),
+        productCode: firstValue(r.raw, ['Product Code']),
+        issue: r.itemStatus === 'missing' ? 'not found in UAT' : 'ambiguous (truncated name)',
+        candidates: (r.itemOptions || []).join(' | '),
+      }))
     const failures = rows.filter((r) => r.runStatus === 'error')
     await exportXlsx(
       [
         { name: 'All rows', rows: rows.map(toRow) },
-        { name: 'Failures', rows: failures.map(toRow) },
+        { name: 'Item issues', rows: itemIssues },
+        { name: 'Write failures', rows: failures.map(toRow) },
         {
           name: 'Summary',
           rows: [
             { metric: 'Total rows', value: rows.length },
-            ...(['create', 'update', 'unchanged', 'conflict'] as const).map((a) => ({ metric: a, value: counts[a] })),
-            { metric: 'Written OK', value: rows.filter((r) => r.runStatus === 'done').length },
-            { metric: 'Write errors', value: failures.length },
+            { metric: 'Documents', value: docCount },
+            ...(['create', 'update', 'unchanged', 'conflict'] as const).map((a) => ({ metric: `${a} (docs)`, value: counts[a] })),
+            { metric: 'Item issues (rows)', value: itemIssues.length },
+            { metric: 'Docs written OK', value: counts.done },
+            { metric: 'Docs with write errors', value: counts.failed },
           ],
         },
       ],
@@ -694,6 +713,16 @@ function RowDrawer({ row, onClose }: { row: RowRec; onClose: () => void }) {
           <div className={row.runStatus === 'done' ? 'ok-box' : 'error-box'}>
             {row.runStatus === 'done' ? `Written (${row.runOp}) → ${row.runResultName || row.erpName}` : `Write failed: ${row.runError}`}
           </div>
+        )}
+        {row.itemStatus && row.itemStatus !== 'ok' && (
+          <div className="warn-box small">
+            Item <span className="mono">{firstValue(row.raw, ['Product', 'Product Code'])}</span>{' '}
+            {row.itemStatus === 'missing' ? 'was not found in UAT' : 'is ambiguous (name truncated)'} — this line is left out of the write.
+            {(row.itemOptions?.length ?? 0) > 0 && <> Candidates: {row.itemOptions!.join(', ')}</>}
+          </div>
+        )}
+        {row.itemStatus === 'ok' && row.resolvedItem && (
+          <p className="muted small">Item → UAT: <span className="mono" style={{ color: 'var(--green)' }}>{row.resolvedItem}</span></p>
         )}
         {(row.changed?.length ?? 0) > 0 && (
           <>

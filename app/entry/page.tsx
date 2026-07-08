@@ -388,15 +388,26 @@ export default function EntryPage() {
   }
 
   // ---- derived ----------------------------------------------------------------
+  // Counts are per DOCUMENT (distinct distributor+date key), not per product
+  // row — many product rows collapse into one Secondary Data Entry doc.
   const counts = useMemo(() => {
     const c = { create: 0, update: 0, unchanged: 0, conflict: 0, done: 0, failed: 0 }
+    const seenCreate = new Set<string>(), seenUpdate = new Set<string>(), seenUnchanged = new Set<string>()
+    const seenDone = new Set<string>(), seenFailed = new Set<string>()
     for (const r of rows) {
-      if (r.action) c[r.action]++
-      if (r.runStatus === 'done') c.done++
-      if (r.runStatus === 'error') c.failed++
+      if (r.action === 'conflict') { c.conflict++; continue } // rows that can't form a doc
+      if (!r.key) continue
+      if (r.action === 'create' && !seenCreate.has(r.key)) { seenCreate.add(r.key); c.create++ }
+      else if (r.action === 'update' && !seenUpdate.has(r.key)) { seenUpdate.add(r.key); c.update++ }
+      else if (r.action === 'unchanged' && !seenUnchanged.has(r.key)) { seenUnchanged.add(r.key); c.unchanged++ }
+      if (r.runStatus === 'done' && !seenDone.has(r.key)) { seenDone.add(r.key); c.done++ }
+      if (r.runStatus === 'error' && !seenFailed.has(r.key)) { seenFailed.add(r.key); c.failed++ }
     }
     return c
   }, [rows])
+
+  // Number of distinct documents (distributor+date) across all loaded rows.
+  const docCount = useMemo(() => new Set(rows.map((r) => r.key).filter(Boolean)).size, [rows])
 
   const monthCounts = useMemo(() => {
     const m = new Map<string, number>()
@@ -458,7 +469,7 @@ export default function EntryPage() {
           <h2>
             2 · Loaded rows
             <span className="hint">
-              {rows.length.toLocaleString()} rows · {monthCounts.map(([m, n]) => `${m}: ${n.toLocaleString()}`).join(' · ')}
+              {rows.length.toLocaleString()} rows → {docCount.toLocaleString()} documents · {monthCounts.map(([m, n]) => `${m}: ${n.toLocaleString()}`).join(' · ')}
             </span>
           </h2>
           <div className="row-flex" style={{ marginBottom: 12 }}>
@@ -482,12 +493,12 @@ export default function EntryPage() {
           {triaged && (
             <>
               <div className="kpis">
-                <div className="kpi green"><div className="label">To create</div><div className="value">{counts.create.toLocaleString()}</div></div>
-                <div className="kpi blue"><div className="label">To update</div><div className="value">{counts.update.toLocaleString()}</div></div>
-                <div className="kpi"><div className="label">Unchanged</div><div className="value">{counts.unchanged.toLocaleString()}</div></div>
-                <div className="kpi amber"><div className="label">Conflicts</div><div className="value">{counts.conflict.toLocaleString()}</div></div>
-                <div className="kpi green"><div className="label">Written OK</div><div className="value">{counts.done.toLocaleString()}</div></div>
-                <div className="kpi red"><div className="label">Write errors</div><div className="value">{counts.failed.toLocaleString()}</div></div>
+                <div className="kpi green"><div className="label">Docs to create</div><div className="value">{counts.create.toLocaleString()}</div></div>
+                <div className="kpi blue"><div className="label">Docs to update</div><div className="value">{counts.update.toLocaleString()}</div></div>
+                <div className="kpi"><div className="label">Unchanged docs</div><div className="value">{counts.unchanged.toLocaleString()}</div></div>
+                <div className="kpi amber"><div className="label">Conflict rows</div><div className="value">{counts.conflict.toLocaleString()}</div></div>
+                <div className="kpi green"><div className="label">Docs written OK</div><div className="value">{counts.done.toLocaleString()}</div></div>
+                <div className="kpi red"><div className="label">Docs with errors</div><div className="value">{counts.failed.toLocaleString()}</div></div>
               </div>
 
               <div className="row-flex" style={{ marginBottom: 12 }}>

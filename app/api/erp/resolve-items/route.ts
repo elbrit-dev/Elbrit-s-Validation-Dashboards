@@ -7,6 +7,11 @@ import { normalizeItem } from '@/lib/shared/mapping'
 // normalized nomenclature key (see normalizeItem). Exact normalized match wins;
 // if the sheet name was truncated, a UNIQUE prefix match is accepted; multiple
 // candidates are "ambiguous" (must be fixed in the sheet); none is "missing".
+//
+// The index is restricted to item_group = "Products" — the SAME set the
+// Secondary Data Table's `item` Link field allows in ERPNext — so we never
+// match packaging / -SCP / cylinder / sticker items that the doc would reject.
+const ITEM_GROUP = 'Products'
 export interface ItemMatch {
   status: 'ok' | 'ambiguous' | 'missing'
   name: string // canonical UAT Item name when status === 'ok'
@@ -30,7 +35,7 @@ async function getIndex(): Promise<ItemIndex> {
   const byNorm = new Map<string, string[]>()
   let offset = 0
   for (;;) {
-    const docs = await listDocs('Item', [['is_sales_item', '=', 1]], ['name'], { limit: PAGE, offset })
+    const docs = await listDocs('Item', [['item_group', '=', ITEM_GROUP]], ['name'], { limit: PAGE, offset })
     for (const d of docs) {
       const nm = String(d.name)
       const norm = normalizeItem(nm)

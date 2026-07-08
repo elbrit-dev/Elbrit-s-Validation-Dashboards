@@ -82,6 +82,7 @@ export default function EntryPage() {
   const [tab, setTab] = useState<'all' | TriageAction | 'failed'>('all')
   const [doCreate, setDoCreate] = useState(true)
   const [doUpdate, setDoUpdate] = useState(true)
+  const [testLimit, setTestLimit] = useState('') // blank = all docs; e.g. "2" for a test run
   const [drawer, setDrawer] = useState<RowRec | null>(null)
   const [paused, setPaused] = useState(false)
   const signal = useRef({ paused: false, aborted: false })
@@ -282,8 +283,11 @@ export default function EntryPage() {
     try {
       const createRows = doCreate ? rows.filter((r) => r.action === 'create' && r.runStatus !== 'done') : []
       const updateRows = doUpdate ? rows.filter((r) => r.action === 'update' && r.runStatus !== 'done') : []
-      const creates = groupRows(createRows)
-      const updates = groupRows(updateRows)
+      // Test mode: cap how many DOCUMENTS (distributor+date groups) to write.
+      const limit = Math.max(0, Math.floor(Number(testLimit) || 0))
+      const cap = <T,>(arr: T[]) => (limit > 0 ? arr.slice(0, limit) : arr)
+      const creates = cap(groupRows(createRows))
+      const updates = cap(groupRows(updateRows))
       const total = creates.length + updates.length
       let base = 0
       const rec = { ...session, phase: 'running' as const, updatedAt: Date.now() }
@@ -425,32 +429,34 @@ export default function EntryPage() {
       error: r.runError || '',
       ...r.raw,
     })
-    // Item-name issues: products that could NOT be matched to a UAT Item — these
-    // are left OUT of the written documents; fix the sheet nomenclature for them.
-    const itemIssues = rows
-      .filter((r) => r.itemStatus === 'ambiguous' || r.itemStatus === 'missing')
-      .map((r) => ({
-        distributor: distributorOf(r.raw),
-        date: dateOf(r.raw),
-        month: r.monthTag,
-        productSheet: firstValue(r.raw, ['Product', 'Product Code']),
-        productCode: firstValue(r.raw, ['Product Code']),
-        issue: r.itemStatus === 'missing' ? 'not found in UAT' : 'ambiguous (truncated name)',
-        candidates: (r.itemOptions || []).join(' | '),
-      }))
-    const failures = rows.filter((r) => r.runStatus === 'error')
+    // Why is a row a problem? (conflict reason, or the write error)
+    const problemOf = (r: RowRec): string => {
+      if (r.runStatus === 'error') return `write failed: ${r.runError || 'unknown error'}`
+      if (r.action === 'conflict') {
+        if (!r.key) return 'missing distributor or date'
+        if (r.itemStatus === 'missing') return 'item not found in UAT (Products)'
+        if (r.itemStatus === 'ambiguous') return `item ambiguous: ${(r.itemOptions || []).join(' | ')}`
+        return 'conflict'
+      }
+      return ''
+    }
+    // Everything that did NOT go through cleanly — conflicts + write failures —
+    // in one sheet with a "problem" column, so it's easy to fix and re-run.
+    const errorRows = rows
+      .filter((r) => r.action === 'conflict' || r.runStatus === 'error')
+      .map((r) => ({ problem: problemOf(r), ...toRow(r) }))
+
     await exportXlsx(
       [
+        { name: 'Errors', rows: errorRows },
         { name: 'All rows', rows: rows.map(toRow) },
-        { name: 'Item issues', rows: itemIssues },
-        { name: 'Write failures', rows: failures.map(toRow) },
         {
           name: 'Summary',
           rows: [
             { metric: 'Total rows', value: rows.length },
             { metric: 'Documents', value: docCount },
             ...(['create', 'update', 'unchanged', 'conflict'] as const).map((a) => ({ metric: `${a} (docs)`, value: counts[a] })),
-            { metric: 'Item issues (rows)', value: itemIssues.length },
+            { metric: 'Conflict rows', value: rows.filter((r) => r.action === 'conflict').length },
             { metric: 'Docs written OK', value: counts.done },
             { metric: 'Docs with write errors', value: counts.failed },
           ],
@@ -598,8 +604,20 @@ export default function EntryPage() {
               <div className="row-flex" style={{ marginBottom: 12 }}>
                 <label className="row-flex small"><input type="checkbox" checked={doCreate} onChange={(e) => setDoCreate(e.target.checked)} /> create {counts.create.toLocaleString()}</label>
                 <label className="row-flex small"><input type="checkbox" checked={doUpdate} onChange={(e) => setDoUpdate(e.target.checked)} /> update {counts.update.toLocaleString()}</label>
+                <label className="row-flex small" title="For a test run, write only the first N documents. Leave blank to do all.">
+                  test:
+                  <input
+                    type="number"
+                    min={1}
+                    placeholder="all"
+                    value={testLimit}
+                    onChange={(e) => setTestLimit(e.target.value)}
+                    style={{ width: 64, marginLeft: 4 }}
+                  />
+                  docs
+                </label>
                 <button className="primary" onClick={startRun} disabled={isBusy || (!doCreate && !doUpdate)}>
-                  Run to UAT
+                  {Number(testLimit) > 0 ? `Run first ${Math.floor(Number(testLimit))} to UAT` : 'Run to UAT'}
                 </button>
                 {busy.kind === 'run' && (
                   <>

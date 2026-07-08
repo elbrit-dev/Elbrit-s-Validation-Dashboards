@@ -24,6 +24,10 @@ export interface RowRec {
   action?: TriageAction
   erpName?: string | null
   changed?: ChangedField[]
+  // Item-name resolution against UAT (nomenclature matching).
+  resolvedItem?: string // canonical UAT Item name when itemStatus === 'ok'
+  itemStatus?: 'ok' | 'ambiguous' | 'missing'
+  itemOptions?: string[] // candidate names when ambiguous
   runOp?: 'create' | 'update'
   runStatus?: RunStatus
   runError?: string

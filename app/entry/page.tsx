@@ -12,7 +12,7 @@ import { downloadFile } from '@/lib/client/driveClient'
 import { parseFile, triageAll, exportXlsx } from '@/lib/client/workers'
 import { runInBatches } from '@/lib/client/batchRunner'
 import { getDb, latestSession, clearSession, requestPersistence, type RowRec, type SessionRec } from '@/lib/client/db'
-import { parentDoc, childRow, distributorOf, dateOf, firstValue, splitKey } from '@/lib/shared/mapping'
+import { childRow, distributorOf, dateOf, firstValue, splitKey } from '@/lib/shared/mapping'
 import type { ErpSummary, RowResult, TriageAction } from '@/lib/shared/types'
 
 const LOOKUP_CHUNK = 90
@@ -23,9 +23,13 @@ type Busy =
   | { kind: 'none' }
   | { kind: 'load'; label: string; pct: number | null }
   | { kind: 'lookup'; done: number; total: number }
+  | { kind: 'resolve'; done: number; total: number }
   | { kind: 'triage' }
   | { kind: 'run'; op: string; done: number; total: number }
   | { kind: 'scan'; count: number }
+
+// Result of matching a sheet product name to a canonical UAT Item.
+type ItemMatch = { status: 'ok' | 'ambiguous' | 'missing'; name: string; options?: string[] }
 
 interface Health {
   erp: { configured: boolean; base: string | null }
@@ -53,6 +57,13 @@ function groupRows(rs: RowRec[]): WriteGroup[] {
     g.rows.push(r)
   }
   return [...m.values()]
+}
+
+// Build a parent's child `items`, using the canonical UAT Item name resolved at
+// check time (falls back to the raw product name — but such rows are conflicts
+// and never reach a write group).
+function groupItems(rs: RowRec[]): Record<string, unknown>[] {
+  return rs.map((r) => ({ ...childRow(r.raw), item: r.resolvedItem || firstValue(r.raw, ['Product', 'Product Code']) }))
 }
 
 async function bulkPutChunked(rows: RowRec[]) {
@@ -181,18 +192,56 @@ export default function EntryPage() {
         setBusy({ kind: 'lookup', done: Math.min(i + LOOKUP_CHUNK, keys.length), total: keys.length })
       }
 
+      // resolve sheet product names → canonical UAT Item names (nomenclature)
+      const products = [...new Set(rows.map((r) => firstValue(r.raw, ['Product', 'Product Code'])).filter(Boolean))]
+      const itemMatch = new Map<string, ItemMatch>()
+      const RESOLVE_CHUNK = 200
+      for (let i = 0; i < products.length; i += RESOLVE_CHUNK) {
+        const slice = products.slice(i, i + RESOLVE_CHUNK)
+        let ok = false
+        let lastErr = ''
+        for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+          try {
+            const res = await fetch('/api/erp/resolve-items', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ names: slice }),
+            })
+            const body = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
+            const resolved = (body.resolved || {}) as Record<string, ItemMatch>
+            for (const [k, v] of Object.entries(resolved)) itemMatch.set(k, v)
+            ok = true
+          } catch (e) {
+            lastErr = e instanceof Error ? e.message : String(e)
+            if (attempt < 2) await sleep(1200 * (attempt + 1))
+          }
+        }
+        if (!ok) throw new Error(`Item resolve failed: ${lastErr}`)
+        setBusy({ kind: 'resolve', done: Math.min(i + RESOLVE_CHUNK, products.length), total: products.length })
+      }
+
       setBusy({ kind: 'triage' })
       const results = await triageAll(rows.map((r) => ({ key: r.key, raw: r.raw })), indexEntries)
-      const byIdx = new Map<number, RowRec>()
-      rows.forEach((r, i) => byIdx.set(i, r))
-      const updated = rows.map((r, i) => ({
-        ...r,
-        action: results[i].action,
-        erpName: results[i].erpName,
-        changed: results[i].changed,
-        runStatus: undefined,
-        runError: undefined,
-      }))
+      const updated = rows.map((r, i) => {
+        const prod = firstValue(r.raw, ['Product', 'Product Code'])
+        const m = itemMatch.get(prod)
+        const itemStatus = m?.status ?? 'missing'
+        // A row whose item can't be resolved becomes a conflict — it is excluded
+        // from write groups until the sheet nomenclature is fixed.
+        const action: TriageAction = results[i].action === 'conflict' || itemStatus !== 'ok' ? 'conflict' : results[i].action
+        return {
+          ...r,
+          action,
+          erpName: results[i].erpName,
+          changed: results[i].changed,
+          resolvedItem: m?.name || '',
+          itemStatus,
+          itemOptions: m?.options,
+          runStatus: undefined,
+          runError: undefined,
+        }
+      })
       await bulkPutChunked(updated)
       const rec = { ...session, phase: 'triaged' as const, updatedAt: Date.now() }
       await getDb().sessions.put(rec)
@@ -249,7 +298,12 @@ export default function EntryPage() {
           batchSize: WRITE_BATCH,
           endpoint: '/api/erp/create',
           keyOf: (g) => g.key,
-          buildBody: (slice) => ({ rows: slice.map((g) => ({ key: g.key, doc: parentDoc(g.rows.map((r) => r.raw)) })) }),
+          buildBody: (slice) => ({
+            rows: slice.map((g) => ({
+              key: g.key,
+              doc: { distributor: distributorOf(g.rows[0].raw), date: dateOf(g.rows[0].raw), items: groupItems(g.rows) },
+            })),
+          }),
           onResult: (res) => applyGroupResults(res, 'create', byKey),
           onProgress: (done) => setBusy({ kind: 'run', op: 'Creating', done: base + done, total }),
           signal: signal.current,
@@ -428,7 +482,22 @@ export default function EntryPage() {
     { key: 'distributor', header: 'Distributor', width: 200, render: (r) => distributorOf(r.raw) || <span className="muted">—</span> },
     { key: 'date', header: 'Date', width: 110, render: (r) => dateOf(r.raw) || <span className="muted">—</span> },
     { key: 'month', header: 'Month', width: 80, render: (r) => r.monthTag },
-    { key: 'product', header: 'Product', width: 240, render: (r) => firstValue(r.raw, ['Product', 'Product Code']) || <span className="muted">—</span> },
+    { key: 'product', header: 'Product (sheet)', width: 200, render: (r) => firstValue(r.raw, ['Product', 'Product Code']) || <span className="muted">—</span> },
+    {
+      key: 'itemuat',
+      header: 'Item → UAT',
+      width: 200,
+      render: (r) =>
+        r.itemStatus === 'ok' ? (
+          <span className="mono" style={{ color: 'var(--green)' }}>{r.resolvedItem}</span>
+        ) : r.itemStatus === 'ambiguous' ? (
+          <span className="pill amber" title={(r.itemOptions || []).join(', ')}>ambiguous</span>
+        ) : r.itemStatus === 'missing' ? (
+          <span className="pill error">not found</span>
+        ) : (
+          <span className="muted">—</span>
+        ),
+    },
     { key: 'action', header: 'Action', width: 110, render: (r) => (r.action ? <span className={`pill ${r.action}`}>{r.action}</span> : <span className="muted">—</span>) },
     {
       key: 'run',
@@ -479,7 +548,13 @@ export default function EntryPage() {
             {busy.kind === 'lookup' && (
               <>
                 <div className="progress"><div style={{ width: `${(busy.done / busy.total) * 100}%` }} /></div>
-                <span className="muted small">Looking up {busy.done.toLocaleString()}/{busy.total.toLocaleString()} codes…</span>
+                <span className="muted small">Looking up {busy.done.toLocaleString()}/{busy.total.toLocaleString()} docs…</span>
+              </>
+            )}
+            {busy.kind === 'resolve' && (
+              <>
+                <div className="progress"><div style={{ width: `${(busy.done / Math.max(busy.total, 1)) * 100}%` }} /></div>
+                <span className="muted small">Matching items {busy.done.toLocaleString()}/{busy.total.toLocaleString()}…</span>
               </>
             )}
             {busy.kind === 'triage' && <span className="muted small">Diffing rows against UAT…</span>}

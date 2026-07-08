@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server'
 import { assertConfigured, listDocs } from '@/lib/server/erpnext'
-import { CODE_FIELD, DOCTYPE, NAME_PREFIX } from '@/lib/shared/mapping'
-import { code as stripZeros } from '@/lib/shared/normalize'
+import { DOCTYPE, KEY_SEP } from '@/lib/shared/mapping'
 
 // POST { offset?: number, limit?: number }
-// Pages through ALL coded records of the doctype (name like "<PREFIX>%").
-// Used to build the full-window index that powers delete-candidate detection.
-// The client loops offsets until a short page comes back.
+// Pages through ALL Secondary Data Entry parents. Used to build the full-window
+// index that powers delete-candidate detection. The client loops offsets until
+// a short page comes back. `code` is the parent key (distributor␟date) so it can
+// be compared against the loaded sheet keys.
 export async function POST(req: Request) {
   try {
     assertConfigured()
@@ -17,12 +17,10 @@ export async function POST(req: Request) {
   const offset = Number(body?.offset) || 0
   const limit = Math.min(Number(body?.limit) || 500, 500)
   try {
-    const docs = await listDocs(DOCTYPE, [['name', 'like', `${NAME_PREFIX}%`]], ['name', CODE_FIELD], { limit, offset })
+    const docs = await listDocs(DOCTYPE, [], ['name', 'distributor', 'date'], { limit, offset })
     const records = docs.map((d) => ({
       name: String(d.name),
-      code:
-        stripZeros(d[CODE_FIELD]) ||
-        stripZeros(String(d.name).slice(NAME_PREFIX.length)),
+      code: `${String(d.distributor ?? '')}${KEY_SEP}${String(d.date ?? '')}`,
     }))
     return NextResponse.json({ records, nextOffset: docs.length < limit ? null : offset + docs.length })
   } catch (err) {

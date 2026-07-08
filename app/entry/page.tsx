@@ -12,7 +12,7 @@ import { downloadFile } from '@/lib/client/driveClient'
 import { parseFile, triageAll, exportXlsx } from '@/lib/client/workers'
 import { runInBatches } from '@/lib/client/batchRunner'
 import { getDb, latestSession, clearSession, requestPersistence, type RowRec, type SessionRec } from '@/lib/client/db'
-import { erpPayload, RECORD_LABEL } from '@/lib/shared/mapping'
+import { parentDoc, childRow, distributorOf, dateOf, firstValue, splitKey } from '@/lib/shared/mapping'
 import type { ErpSummary, RowResult, TriageAction } from '@/lib/shared/types'
 
 const LOOKUP_CHUNK = 90
@@ -33,6 +33,27 @@ interface Health {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// A write unit: all sheet rows sharing one parent key (distributor + date).
+interface WriteGroup {
+  key: string
+  erpName?: string | null
+  rows: RowRec[]
+}
+
+// Collapse rows into parent groups, preserving the ERP name carried by triage.
+function groupRows(rs: RowRec[]): WriteGroup[] {
+  const m = new Map<string, WriteGroup>()
+  for (const r of rs) {
+    let g = m.get(r.key)
+    if (!g) {
+      g = { key: r.key, erpName: r.erpName, rows: [] }
+      m.set(r.key, g)
+    }
+    g.rows.push(r)
+  }
+  return [...m.values()]
+}
 
 async function bulkPutChunked(rows: RowRec[]) {
   const db = getDb()
@@ -185,16 +206,20 @@ export default function EntryPage() {
   }
 
   // ---- step 3: batched create/update runs -----------------------------------
-  const applyResults = async (results: RowResult[], op: 'create' | 'update', byKey: Map<string, RowRec>) => {
+  // Many sheet rows collapse into ONE parent doc (distributor + date). We write
+  // per GROUP, then fan the result back onto every member row for display.
+  const applyGroupResults = async (results: RowResult[], op: 'create' | 'update', byKey: Map<string, WriteGroup>) => {
     const touched: RowRec[] = []
     for (const res of results) {
-      const row = byKey.get(res.key)
-      if (!row) continue
-      row.runOp = op
-      row.runStatus = res.ok ? 'done' : 'error'
-      row.runError = res.error
-      row.runResultName = res.erpName
-      touched.push(row)
+      const group = byKey.get(res.key)
+      if (!group) continue
+      for (const row of group.rows) {
+        row.runOp = op
+        row.runStatus = res.ok ? 'done' : 'error'
+        row.runError = res.error
+        row.runResultName = res.erpName
+        touched.push(row)
+      }
     }
     await bulkPutChunked(touched)
     setRows((prev) => [...prev])
@@ -206,8 +231,10 @@ export default function EntryPage() {
     setPaused(false)
     signal.current = { paused: false, aborted: false }
     try {
-      const creates = doCreate ? rows.filter((r) => r.action === 'create' && r.runStatus !== 'done') : []
-      const updates = doUpdate ? rows.filter((r) => r.action === 'update' && r.runStatus !== 'done') : []
+      const createRows = doCreate ? rows.filter((r) => r.action === 'create' && r.runStatus !== 'done') : []
+      const updateRows = doUpdate ? rows.filter((r) => r.action === 'update' && r.runStatus !== 'done') : []
+      const creates = groupRows(createRows)
+      const updates = groupRows(updateRows)
       const total = creates.length + updates.length
       let base = 0
       const rec = { ...session, phase: 'running' as const, updatedAt: Date.now() }
@@ -215,36 +242,36 @@ export default function EntryPage() {
       setSession(rec)
 
       if (creates.length > 0) {
-        const byKey = new Map(creates.map((r) => [r.key, r]))
+        const byKey = new Map(creates.map((g) => [g.key, g]))
         setBusy({ kind: 'run', op: 'Creating', done: 0, total })
         await runInBatches({
           items: creates,
           batchSize: WRITE_BATCH,
           endpoint: '/api/erp/create',
-          keyOf: (r) => r.key,
-          buildBody: (slice) => ({ rows: slice.map((r) => ({ key: r.key, fields: erpPayload(r.raw) })) }),
-          onResult: (res) => applyResults(res, 'create', byKey),
+          keyOf: (g) => g.key,
+          buildBody: (slice) => ({ rows: slice.map((g) => ({ key: g.key, doc: parentDoc(g.rows.map((r) => r.raw)) })) }),
+          onResult: (res) => applyGroupResults(res, 'create', byKey),
           onProgress: (done) => setBusy({ kind: 'run', op: 'Creating', done: base + done, total }),
           signal: signal.current,
         })
         base += creates.length
       }
       if (updates.length > 0 && !signal.current.aborted) {
-        const byKey = new Map(updates.map((r) => [r.key, r]))
+        const byKey = new Map(updates.map((g) => [g.key, g]))
         setBusy({ kind: 'run', op: 'Updating', done: base, total })
         await runInBatches({
           items: updates,
           batchSize: WRITE_BATCH,
           endpoint: '/api/erp/update',
-          keyOf: (r) => r.key,
+          keyOf: (g) => g.key,
           buildBody: (slice) => ({
-            rows: slice.map((r) => ({
-              key: r.key,
-              erpName: r.erpName,
-              fields: Object.fromEntries((r.changed || []).map((c) => [c.erpField, c.sheetVal])),
+            rows: slice.map((g) => ({
+              key: g.key,
+              erpName: g.erpName,
+              items: g.rows.map((r) => childRow(r.raw)),
             })),
           }),
-          onResult: (res) => applyResults(res, 'update', byKey),
+          onResult: (res) => applyGroupResults(res, 'update', byKey),
           onProgress: (done) => setBusy({ kind: 'run', op: 'Updating', done: base + done, total }),
           signal: signal.current,
         })
@@ -387,16 +414,11 @@ export default function EntryPage() {
   const isBusy = busy.kind !== 'none'
 
   const columns: VColumn<RowRec>[] = [
-    { key: 'key', header: 'Code', width: 110, render: (r) => <span className="mono">{r.key || '—'}</span> },
-    { key: 'month', header: 'Month', width: 90, render: (r) => r.monthTag },
-    {
-      key: 'name',
-      header: RECORD_LABEL,
-      width: 260,
-      render: (r) => String(r.raw[session?.codeColumn ? Object.keys(r.raw).find((k) => /name/i.test(k)) || '' : ''] ?? ''),
-    },
+    { key: 'distributor', header: 'Distributor', width: 200, render: (r) => distributorOf(r.raw) || <span className="muted">—</span> },
+    { key: 'date', header: 'Date', width: 110, render: (r) => dateOf(r.raw) || <span className="muted">—</span> },
+    { key: 'month', header: 'Month', width: 80, render: (r) => r.monthTag },
+    { key: 'product', header: 'Product', width: 240, render: (r) => firstValue(r.raw, ['Product', 'Product Code']) || <span className="muted">—</span> },
     { key: 'action', header: 'Action', width: 110, render: (r) => (r.action ? <span className={`pill ${r.action}`}>{r.action}</span> : <span className="muted">—</span>) },
-    { key: 'changed', header: 'Changed fields', width: 260, render: (r) => (r.changed || []).map((c) => c.label).join(', ') },
     {
       key: 'run',
       header: 'Run',
@@ -574,7 +596,7 @@ function RowDrawer({ row, onClose }: { row: RowRec; onClose: () => void }) {
       <div className="drawer-overlay" onClick={onClose} />
       <div className="drawer">
         <div className="row-flex spread">
-          <h3 className="mono">{row.key || '(no code)'}</h3>
+          <h3 className="mono">{row.key ? `${splitKey(row.key).distributor} · ${splitKey(row.key).date}` : '(no key)'}</h3>
           <button onClick={onClose}>Close</button>
         </div>
         <p className="muted small">

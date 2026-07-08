@@ -1,17 +1,18 @@
 import { NextResponse } from 'next/server'
 import { assertConfigured, updateDoc } from '@/lib/server/erpnext'
 import { mapLimit } from '@/lib/server/retry'
-import { DOCTYPE } from '@/lib/shared/mapping'
+import { CHILD_TABLE, DOCTYPE } from '@/lib/shared/mapping'
 import type { BatchResponse, RowResult } from '@/lib/shared/types'
 
-// POST { rows: [{ key, erpName, fields: { erpField: value } }] }  (≤ ~40/call)
-// Writes ONLY the changed fields the client's triage found. Rows are keyed by
-// distinct erpName so no document is ever written concurrently.
+// POST { rows: [{ key, erpName, items: [...] }] }  (≤ 50/call)
+// The parent already exists — we replace its `items` child table with the
+// sheet's product lines (PUT of a table field overwrites the whole table).
+// Rows are keyed by distinct erpName so no document is written concurrently.
 const MAX_ROWS = 50
 const CONCURRENCY = 5
 const DEADLINE_MS = 8000
 
-interface InRow { key: string; erpName: string; fields: Record<string, string> }
+interface InRow { key: string; erpName: string; items: unknown[] }
 
 export async function POST(req: Request) {
   try {
@@ -33,11 +34,12 @@ export async function POST(req: Request) {
       pending.push(row.key)
       return
     }
-    if (!row.erpName || !row.fields || Object.keys(row.fields).length === 0) {
-      results.push({ key: row.key, ok: false, error: 'erpName and non-empty fields are required' })
+    const items = Array.isArray(row.items) ? row.items : []
+    if (!row.erpName || items.length === 0) {
+      results.push({ key: row.key, ok: false, error: 'erpName and non-empty items are required' })
       return
     }
-    const out = await updateDoc(DOCTYPE, row.erpName, row.fields)
+    const out = await updateDoc(DOCTYPE, row.erpName, { [CHILD_TABLE]: items })
     results.push(
       out.ok
         ? { key: row.key, ok: true, erpName: row.erpName }

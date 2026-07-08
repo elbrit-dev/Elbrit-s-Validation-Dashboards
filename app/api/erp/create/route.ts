@@ -1,18 +1,18 @@
 import { NextResponse } from 'next/server'
 import { assertConfigured, createDoc } from '@/lib/server/erpnext'
 import { mapLimit } from '@/lib/server/retry'
-import { CODE_FIELD, DOCTYPE } from '@/lib/shared/mapping'
+import { CHILD_TABLE, DOCTYPE } from '@/lib/shared/mapping'
 import type { BatchResponse, RowResult } from '@/lib/shared/types'
 
-// POST { rows: [{ key, fields: { erpField: value } }] }  (≤ ~40 per call)
-// Creates one document per row. Soft deadline: rows not reached before the
-// budget are returned as `pending` for the client to re-slice — a slow ERPNext
-// can never push a batch past the serverless timeout.
+// POST { rows: [{ key, doc: { distributor, date, items: [...] } }] }  (≤ 50/call)
+// Each row is ONE parent Secondary Data Entry (distributor + date) carrying its
+// full `items` child table. Soft deadline: rows not reached before the budget
+// come back as `pending` for the client to re-slice.
 const MAX_ROWS = 50
 const CONCURRENCY = 5
 const DEADLINE_MS = 8000
 
-interface InRow { key: string; fields: Record<string, string> }
+interface InRow { key: string; doc: Record<string, unknown> }
 
 export async function POST(req: Request) {
   try {
@@ -34,12 +34,11 @@ export async function POST(req: Request) {
       pending.push(row.key)
       return
     }
-    // ⚠ Placeholder doc shape (doctor Lead). lead_name is mandatory on Lead;
-    // the real secondary-sales doc shape lands with the mapping swap.
-    const doc: Record<string, unknown> = {
-      ...row.fields,
-      [CODE_FIELD]: row.key,
-      lead_name: row.fields.first_name || row.fields.lead_name || `Record ${row.key}`,
+    const doc = row.doc || {}
+    const items = Array.isArray(doc[CHILD_TABLE]) ? (doc[CHILD_TABLE] as unknown[]) : []
+    if (!doc.distributor || !doc.date || items.length === 0) {
+      results.push({ key: row.key, ok: false, error: 'distributor, date and at least one item are required' })
+      return
     }
     const out = await createDoc(DOCTYPE, doc)
     results.push(

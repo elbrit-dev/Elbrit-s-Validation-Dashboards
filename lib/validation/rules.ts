@@ -1,12 +1,12 @@
 // Validation rule engine — pure functions over sheet rows (via the field
 // mapping). Adding a rule here automatically flows through the KPIs, charts,
-// issue counts and drilldown, exactly like the doctor dashboard.
+// issue counts and drilldown.
 //
-// ⚠ PLACEHOLDER RULES (doctor fields) — swapped together with lib/shared/mapping.ts
-// when the real secondary-sales fields arrive.
+// Rules for Secondary Sales: identity fields (distributor / product / date)
+// must be present, and the secondary qty / value must be real numbers.
 
-import { sheetValue, FIELD_MAP } from '../shared/mapping'
-import { phone as normPhone, text } from '../shared/normalize'
+import { firstValue, CHILD_FIELDS, PARENT_FIELDS } from '../shared/mapping'
+import { text } from '../shared/normalize'
 
 export const SEVERITY = {
   error: { key: 'error', label: 'Error', weight: 25, rank: 3 },
@@ -26,12 +26,14 @@ export interface Rule {
   test: (raw: Record<string, unknown>) => boolean // true = FAILS the check
 }
 
-const field = (key: string) => FIELD_MAP.find((f) => f.key === key)
-const val = (raw: Record<string, unknown>, key: string): string => {
-  const f = field(key)
-  return f ? sheetValue(raw, f.sheet) : ''
+// Sheet headers for a mapped field key (parent or child).
+const headersFor = (key: string): string[] => {
+  const f = [...PARENT_FIELDS, ...CHILD_FIELDS].find((x) => x.key === key)
+  return f ? f.sheet : []
 }
+const val = (raw: Record<string, unknown>, key: string): string => firstValue(raw, headersFor(key))
 const has = (raw: Record<string, unknown>, key: string) => text(val(raw, key)) !== ''
+// A numeric cell that is blank or exactly 0.
 const numBlank = (raw: Record<string, unknown>, key: string) => {
   const n = parseFloat(val(raw, key))
   return !Number.isFinite(n) || n === 0
@@ -39,85 +41,58 @@ const numBlank = (raw: Record<string, unknown>, key: string) => {
 
 export const RULES: Rule[] = [
   {
-    id: 'name_missing',
-    label: 'Missing name',
+    id: 'distributor_missing',
+    label: 'Missing distributor',
     severity: 'error',
     category: 'Identity',
-    description: 'Name column is blank.',
-    fix: 'Enter the name.',
-    test: (raw) => !has(raw, 'name'),
+    description: 'Stockist (distributor) column is blank.',
+    fix: 'Fill in the Stockist.',
+    test: (raw) => !has(raw, 'distributor'),
   },
   {
-    id: 'geo_missing',
-    label: 'Missing geo-coordinates',
+    id: 'item_missing',
+    label: 'Missing product',
     severity: 'error',
-    category: 'Geo',
-    description: 'Latitude/longitude is blank or 0.',
-    fix: 'Fill in the latitude and longitude.',
-    test: (raw) => numBlank(raw, 'latitude') || numBlank(raw, 'longitude'),
+    category: 'Identity',
+    description: 'Product (item) column is blank.',
+    fix: 'Fill in the Product.',
+    test: (raw) => !has(raw, 'item'),
   },
   {
-    id: 'territory_missing',
-    label: 'Missing territory (HQ)',
+    id: 'date_missing',
+    label: 'Missing date',
     severity: 'error',
-    category: 'Org',
-    description: 'No HQ / territory value on the row.',
-    fix: 'Fill in the HQ.',
-    test: (raw) => !has(raw, 'territory'),
+    category: 'Identity',
+    description: 'Date column is blank or not a valid date.',
+    fix: 'Fill in the Date (YYYY-MM-DD).',
+    test: (raw) => !has(raw, 'date'),
   },
   {
-    id: 'speciality_missing',
-    label: 'Missing speciality',
+    id: 'secondary_qty_zero',
+    label: 'Secondary qty blank / 0',
     severity: 'warning',
-    category: 'Classification',
-    description: 'Speciality is blank.',
-    fix: 'Fill in the speciality.',
-    test: (raw) => !has(raw, 'specialty'),
+    category: 'Secondary',
+    description: 'Secondary (Qty) is blank or 0.',
+    fix: 'Enter the secondary sales quantity.',
+    test: (raw) => numBlank(raw, 'sales_qty'),
   },
   {
-    id: 'qualification_missing',
-    label: 'Missing qualification',
+    id: 'secondary_val_zero',
+    label: 'Secondary value blank / 0',
     severity: 'warning',
-    category: 'Classification',
-    description: 'Qualification is blank.',
-    fix: 'Fill in the qualification.',
-    test: (raw) => !has(raw, 'qualification'),
+    category: 'Secondary',
+    description: 'Secondary (Val) is blank or 0.',
+    fix: 'Enter the secondary sales value.',
+    test: (raw) => numBlank(raw, 'sales_value'),
   },
   {
-    id: 'category_missing',
-    label: 'Missing category',
-    severity: 'warning',
-    category: 'Classification',
-    description: 'Category is blank.',
-    fix: 'Fill in the category.',
-    test: (raw) => !has(raw, 'category'),
-  },
-  {
-    id: 'contact_missing',
-    label: 'Missing contact number',
-    severity: 'warning',
-    category: 'Contact',
-    description: 'No usable contact number (blank or placeholder).',
-    fix: 'Fill in a valid 10-digit contact number.',
-    test: (raw) => normPhone(val(raw, 'mobile')) === '',
-  },
-  {
-    id: 'city_missing',
-    label: 'Missing city',
-    severity: 'warning',
-    category: 'Address',
-    description: 'City is blank.',
-    fix: 'Fill in the city.',
-    test: (raw) => !has(raw, 'city'),
-  },
-  {
-    id: 'state_missing',
-    label: 'Missing state',
-    severity: 'warning',
-    category: 'Address',
-    description: 'State is blank.',
-    fix: 'Fill in the state.',
-    test: (raw) => !has(raw, 'state'),
+    id: 'closing_qty_zero',
+    label: 'Closing qty blank / 0',
+    severity: 'info',
+    category: 'Closing',
+    description: 'Closing (Qty) is blank or 0.',
+    fix: 'Confirm the closing quantity.',
+    test: (raw) => numBlank(raw, 'closing_qty'),
   },
 ]
 

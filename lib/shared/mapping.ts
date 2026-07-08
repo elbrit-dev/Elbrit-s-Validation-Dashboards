@@ -74,11 +74,17 @@ export function stripEllipsis(s: string): string {
 }
 
 // Nomenclature key for matching a sheet product to a UAT Item name: drop the
-// ellipsis, uppercase, and remove every non-alphanumeric char so freehand
-// spellings collapse to one form — "BRITVOG M0.2" / "BRITVOG M 0.2" → "BRITVOGM02",
-// "NEURONZ - D" / "NEURONZ D" → "NEURONZD", "MY 20" / "MY20" → "MY20".
+// ellipsis, drop parenthetical pack descriptors like "(8 PACKS)", uppercase, and
+// remove every non-alphanumeric char so freehand spellings collapse to one form:
+//   "BRITVOG M0.2" / "BRITVOG M 0.2"        → "BRITVOGM02"
+//   "NEURONZ - D" / "NEURONZ D"             → "NEURONZD"
+//   "MY 20" / "MY20"                        → "MY20"
+//   "CALBRIT 60K (8 PACKS)" / "CALBRIT 60K" → "CALBRIT60K"
 export function normalizeItem(s: string): string {
-  return stripEllipsis(String(s ?? '')).toUpperCase().replace(/[^A-Z0-9]/g, '')
+  return stripEllipsis(String(s ?? ''))
+    .replace(/\([^)]*\)/g, ' ') // remove "(8 PACKS)" and similar parenthetical notes
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
 }
 
 // First non-empty value among a spec's candidate headers (ellipsis stripped).

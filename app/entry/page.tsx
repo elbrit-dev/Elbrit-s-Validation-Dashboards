@@ -77,6 +77,21 @@ function groupRows(rs: RowRec[]): WriteGroup[] {
   return [...m.values()]
 }
 
+// Why a row is a problem — the conflict reason (unresolved distributor/item, or
+// no key) or the ERP write error. Empty string when the row is fine.
+function rowProblem(r: RowRec): string {
+  if (r.runStatus === 'error') return `write failed: ${r.runError || 'unknown error'}`
+  if (r.action === 'conflict') {
+    if (!r.key) return 'missing distributor or date'
+    if (r.distStatus === 'missing') return 'distributor (customer) not found in UAT'
+    if (r.distStatus === 'ambiguous') return `distributor ambiguous: ${(r.distOptions || []).join(' | ')}`
+    if (r.itemStatus === 'missing') return 'item not found in UAT (Products)'
+    if (r.itemStatus === 'ambiguous') return `item ambiguous: ${(r.itemOptions || []).join(' | ')}`
+    return 'conflict'
+  }
+  return ''
+}
+
 // Build a parent's child `items`, using the canonical UAT Item name resolved at
 // check time (falls back to the raw product name — but such rows are conflicts
 // and never reach a write group).
@@ -456,24 +471,11 @@ export default function EntryPage() {
       error: r.runError || '',
       ...r.raw,
     })
-    // Why is a row a problem? (conflict reason, or the write error)
-    const problemOf = (r: RowRec): string => {
-      if (r.runStatus === 'error') return `write failed: ${r.runError || 'unknown error'}`
-      if (r.action === 'conflict') {
-        if (!r.key) return 'missing distributor or date'
-        if (r.distStatus === 'missing') return 'distributor (customer) not found in UAT'
-        if (r.distStatus === 'ambiguous') return `distributor ambiguous: ${(r.distOptions || []).join(' | ')}`
-        if (r.itemStatus === 'missing') return 'item not found in UAT (Products)'
-        if (r.itemStatus === 'ambiguous') return `item ambiguous: ${(r.itemOptions || []).join(' | ')}`
-        return 'conflict'
-      }
-      return ''
-    }
     // Everything that did NOT go through cleanly — conflicts + write failures —
     // in one sheet with a "problem" column, so it's easy to fix and re-run.
     const errorRows = rows
       .filter((r) => r.action === 'conflict' || r.runStatus === 'error')
-      .map((r) => ({ problem: problemOf(r), ...toRow(r) }))
+      .map((r) => ({ problem: rowProblem(r), ...toRow(r) }))
 
     await exportXlsx(
       [
@@ -570,10 +572,18 @@ export default function EntryPage() {
     { key: 'action', header: 'Action', width: 110, render: (r) => (r.action ? <span className={`pill ${r.action}`}>{r.action}</span> : <span className="muted">—</span>) },
     {
       key: 'run',
-      header: 'Run',
-      width: 180,
+      header: 'Run / issue',
+      width: 260,
       render: (r) =>
-        r.runStatus === 'done' ? <span className="pill done">✓ {r.runOp}</span> : r.runStatus === 'error' ? <span className="pill error" title={r.runError}>✗ {r.runError?.slice(0, 40)}</span> : <span className="muted">—</span>,
+        r.runStatus === 'done' ? (
+          <span className="pill done">✓ {r.runOp}</span>
+        ) : r.runStatus === 'error' ? (
+          <span className="pill error" title={r.runError}>✗ {r.runError?.slice(0, 40)}</span>
+        ) : r.action === 'conflict' ? (
+          <span className="pill error" title={rowProblem(r)}>⚠ {rowProblem(r).slice(0, 44)}</span>
+        ) : (
+          <span className="muted">—</span>
+        ),
     },
   ]
 

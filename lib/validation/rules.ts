@@ -40,11 +40,14 @@ const headersFor = (key: string): string[] => {
 }
 const val = (raw: Record<string, unknown>, key: string): string => firstValue(raw, headersFor(key))
 const has = (raw: Record<string, unknown>, key: string) => text(val(raw, key)) !== ''
-// A numeric cell that is blank or exactly 0.
-const numBlank = (raw: Record<string, unknown>, key: string) => {
+// Numeric value of a mapped field (0 when blank / non-numeric).
+export const numOf = (raw: Record<string, unknown>, key: string): number => {
   const n = parseFloat(val(raw, key))
-  return !Number.isFinite(n) || n === 0
+  return Number.isFinite(n) ? n : 0
 }
+// A row with NO quantities at all — every stock/sales figure is blank or 0.
+const NUMERIC_KEYS = ['opening_qty', 'sales_qty', 'sales_value', 'closing_qty', 'closing_balance']
+const allZero = (raw: Record<string, unknown>) => NUMERIC_KEYS.every((k) => numOf(raw, k) === 0)
 
 export const RULES: Rule[] = [
   {
@@ -93,31 +96,14 @@ export const RULES: Rule[] = [
     test: (c) => c.distStatus !== undefined && c.distStatus !== 'ok',
   },
   {
-    id: 'secondary_qty_zero',
-    label: 'Secondary qty blank / 0',
+    id: 'no_quantities',
+    label: 'Row has no quantities',
     severity: 'warning',
-    category: 'Secondary',
-    description: 'Secondary (Qty) is blank or 0.',
-    fix: 'Enter the secondary sales quantity.',
-    test: (c) => numBlank(c.raw, 'sales_qty'),
-  },
-  {
-    id: 'secondary_val_zero',
-    label: 'Secondary value blank / 0',
-    severity: 'warning',
-    category: 'Secondary',
-    description: 'Secondary (Val) is blank or 0.',
-    fix: 'Enter the secondary sales value.',
-    test: (c) => numBlank(c.raw, 'sales_value'),
-  },
-  {
-    id: 'closing_qty_zero',
-    label: 'Closing qty blank / 0',
-    severity: 'info',
-    category: 'Closing',
-    description: 'Closing (Qty) is blank or 0.',
-    fix: 'Confirm the closing quantity.',
-    test: (c) => numBlank(c.raw, 'closing_qty'),
+    category: 'Quantities',
+    description: 'Opening, Secondary and Closing are all blank or 0 — the row carries no data.',
+    fix: 'Remove the empty row, or fill in the stock / sales figures.',
+    // A single 0 (e.g. no secondary sales) is valid — only flag when EVERY figure is 0.
+    test: (c) => allZero(c.raw),
   },
 ]
 

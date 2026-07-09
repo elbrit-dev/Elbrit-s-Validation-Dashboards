@@ -7,7 +7,7 @@ import Link from 'next/link'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import VirtualTable, { type VColumn } from '@/components/VirtualTable'
 import { getDb, latestSession, type RowRec, type SessionRec } from '@/lib/client/db'
-import { RULES, RULE_BY_ID, validateRow, type RowIssues } from '@/lib/validation/rules'
+import { RULES, RULE_BY_ID, validateRow, numOf, type RowIssues } from '@/lib/validation/rules'
 import { distributorOf, firstValue } from '@/lib/shared/mapping'
 import { exportXlsx } from '@/lib/client/workers'
 
@@ -223,6 +223,21 @@ function ValidationDrawer({ v, onClose }: { v: VRow; onClose: () => void }) {
             <span className="k">Item → UAT</span>
             <MatchLine sheet={firstValue(v.row.raw, ['Product', 'Product Code'])} resolved={v.row.resolvedItem} status={v.row.itemStatus} options={v.row.itemOptions} />
           </div>
+        </div>
+        <h4>Quantities → UAT</h4>
+        <div className="kv">
+          {([
+            ['Op. Qty', 'opening_qty'],
+            ['Sec. Qty', 'sales_qty'],
+            ['Sec. Value', 'sales_value'],
+            ['Clos. Qty', 'closing_qty'],
+            ['Clos. Value', 'closing_balance'],
+          ] as const).map(([label, key]) => (
+            <div key={key} style={{ display: 'contents' }}>
+              <span className="k">{label}</span>
+              <span className="mono">{numOf(v.row.raw, key).toLocaleString()}</span>
+            </div>
+          ))}
         </div>
         <h4>Checks</h4>
         <div className="kv">

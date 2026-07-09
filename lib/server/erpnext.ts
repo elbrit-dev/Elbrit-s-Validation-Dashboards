@@ -92,6 +92,32 @@ export async function getDoc(doctype: string, name: string): Promise<Record<stri
 export const createDoc = (doctype: string, doc: Record<string, unknown>) =>
   send('POST', `/api/resource/${encodeURIComponent(doctype)}`, doc)
 
+// Append/merge child rows into an existing doc's table, keyed by `keyField`
+// (default 'item'): existing rows are kept (preserving their child docname),
+// a matching incoming row overlays its values, new rows are appended.
+export async function mergeChildAppend(
+  doctype: string,
+  docName: string,
+  childField: string,
+  incoming: Record<string, unknown>[],
+  keyField = 'item',
+): Promise<SendResult> {
+  const existing = await getDoc(doctype, docName)
+  const existingRows = Array.isArray(existing?.[childField]) ? (existing![childField] as Record<string, unknown>[]) : []
+  const byKey = new Map<string, Record<string, unknown>>()
+  for (const it of existingRows) {
+    const k = String(it[keyField] ?? '').trim()
+    if (k) byKey.set(k, it)
+  }
+  for (const it of incoming) {
+    const k = String(it[keyField] ?? '').trim()
+    if (!k) continue
+    const prev = byKey.get(k)
+    byKey.set(k, prev ? { ...prev, ...it } : it)
+  }
+  return updateDoc(doctype, docName, { [childField]: [...byKey.values()] })
+}
+
 export const updateDoc = (doctype: string, docName: string, patch: Record<string, unknown>) =>
   send('PUT', `/api/resource/${encodeURIComponent(doctype)}/${encodeURIComponent(docName)}`, patch)
 

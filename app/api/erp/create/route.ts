@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server'
-import { assertConfigured, createDoc } from '@/lib/server/erpnext'
+import { assertConfigured, createDoc, listDocs, mergeChildAppend } from '@/lib/server/erpnext'
 import { mapLimit } from '@/lib/server/retry'
 import { CHILD_TABLE, DOCTYPE } from '@/lib/shared/mapping'
 import type { BatchResponse, RowResult } from '@/lib/shared/types'
 
 // POST { rows: [{ key, doc: { distributor, date, items: [...] } }] }  (≤ 50/call)
 // Each row is ONE parent Secondary Data Entry (distributor + date) carrying its
-// full `items` child table. Soft deadline: rows not reached before the budget
-// come back as `pending` for the client to re-slice.
+// full `items` child table. Idempotent/upsert: if a doc for that distributor +
+// date already exists (prior run, retry, or another spelling of the same
+// customer), we APPEND the items into it instead of failing on the duplicate
+// autoname. Soft deadline: rows not reached come back as `pending` to re-slice.
 const MAX_ROWS = 50
 const CONCURRENCY = 5
 const DEADLINE_MS = 8000
@@ -40,10 +42,26 @@ export async function POST(req: Request) {
       results.push({ key: row.key, ok: false, error: 'distributor, date and at least one item are required' })
       return
     }
-    const out = await createDoc(DOCTYPE, doc)
+    let out = await createDoc(DOCTYPE, doc)
+    let erpName = out.data?.name ? String(out.data.name) : undefined
+
+    // Doc already exists (duplicate autoname) → append items into it instead.
+    if (!out.ok && /duplicate|already exists/i.test(out.error || '')) {
+      try {
+        const found = await listDocs(DOCTYPE, [['distributor', '=', doc.distributor], ['date', '=', doc.date]], ['name'], { limit: 1 })
+        const name = found[0]?.name ? String(found[0].name) : ''
+        if (name) {
+          out = await mergeChildAppend(DOCTYPE, name, CHILD_TABLE, items as Record<string, unknown>[])
+          erpName = name
+        }
+      } catch (e) {
+        out = { ok: false, status: 0, error: `merge into existing failed: ${e instanceof Error ? e.message : String(e)}` }
+      }
+    }
+
     results.push(
       out.ok
-        ? { key: row.key, ok: true, erpName: out.data?.name ? String(out.data.name) : undefined }
+        ? { key: row.key, ok: true, erpName }
         : { key: row.key, ok: false, error: out.error || `HTTP ${out.status}` },
     )
   })

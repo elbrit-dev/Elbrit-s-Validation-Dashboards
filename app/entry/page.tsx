@@ -263,6 +263,21 @@ export default function EntryPage() {
     for (const res of results) {
       const group = byKey.get(res.key)
       if (!group) continue
+      // On failure, print the doc + every item we sent (sheet → UAT) and the
+      // ERP error to the console, so you can see exactly which item is rejected.
+      if (!res.ok) {
+        const { distributor, date } = splitKey(res.key)
+        // eslint-disable-next-line no-console
+        console.error(`✗ ${op} failed — ${distributor} · ${date}\n${res.error}`)
+        // eslint-disable-next-line no-console
+        console.table(
+          group.rows.map((r) => ({
+            'Product (sheet)': firstValue(r.raw, ['Product', 'Product Code']),
+            'Item → UAT': r.resolvedItem || '(unresolved)',
+            status: r.itemStatus || '',
+          })),
+        )
+      }
       for (const row of group.rows) {
         row.runOp = op
         row.runStatus = res.ok ? 'done' : 'error'
@@ -326,7 +341,7 @@ export default function EntryPage() {
             rows: slice.map((g) => ({
               key: g.key,
               erpName: g.erpName,
-              items: g.rows.map((r) => childRow(r.raw)),
+              items: groupItems(g.rows),
             })),
           }),
           onResult: (res) => applyGroupResults(res, 'update', byKey),

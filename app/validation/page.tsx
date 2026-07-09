@@ -243,12 +243,21 @@ function ValidationDrawer({ v, onClose }: { v: VRow; onClose: () => void }) {
         <div className="kv">
           {RULES.map((r) => {
             const fail = v.issues.ruleIds.includes(r.id)
+            // The two UAT-resolution checks are only meaningful after Check with
+            // UAT has run — otherwise show "not checked" instead of a false pass.
+            const needsUat =
+              (r.id === 'item_unresolved' && v.row.itemStatus === undefined) ||
+              (r.id === 'distributor_unresolved' && v.row.distStatus === undefined)
             return (
               <div key={r.id} style={{ display: 'contents' }}>
                 <span className="k">{r.label}</span>
-                <span style={{ color: fail ? 'var(--red)' : 'var(--green)' }} title={fail ? r.fix : ''}>
-                  {fail ? `✗ ${r.description}` : '✓ pass'}
-                </span>
+                {needsUat ? (
+                  <span className="muted">— not checked (run “Check with UAT”)</span>
+                ) : (
+                  <span style={{ color: fail ? 'var(--red)' : 'var(--green)' }} title={fail ? r.fix : ''}>
+                    {fail ? `✗ ${r.description}` : '✓ pass'}
+                  </span>
+                )}
               </div>
             )
           })}

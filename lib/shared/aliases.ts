@@ -100,4 +100,5 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'PURANI HOSPITAL SUPPLIES PRIVATE LTD': 'Purani Hospital Supplies Private  Ltd Cbe',
   'R.S.DRUGS AND MEDICALS PVT LTD': 'R.S. Drugs and Medicals Private Limited',
   'YOGIRAM HEALTHCARE': 'Yogiram Distributors Private Limited Anx',
+  'PALEPU PHARMA PVT LTD TAMBARAM': 'Palepu Pharma Dist Pvt Ltd Tambaram',
 }

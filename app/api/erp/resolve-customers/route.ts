@@ -21,10 +21,11 @@ interface CustIndex {
   loadedAt: number
 }
 
-// Alias key keeps punctuation (only case + whitespace normalized) so the sheet's
-// "M M Pharma Distributor" and "M.M. Pharma Distributor" stay distinct — they map
-// to two different UAT customers that the punctuation-stripping key would merge.
-const aliasCustKey = (s: string) => String(s ?? '').replace(/[^\x00-\x7F]/g, '').replace(/\s+/g, ' ').trim().toUpperCase()
+// Alias key: uppercase, drop ALL whitespace, but KEEP punctuation. Dropping
+// spaces means "R.S.DRUGS..." == "R.S. DRUGS..."; keeping dots means "M M Pharma"
+// (→ MMPHARMA) stays distinct from "M.M. Pharma" (→ M.M.PHARMA), which map to
+// two different UAT customers.
+const aliasCustKey = (s: string) => String(s ?? '').replace(/[^\x00-\x7F]/g, '').replace(/\s+/g, '').toUpperCase()
 const ALIAS_BY_KEY = new Map<string, string>(Object.entries(CUSTOMER_ALIASES).map(([k, v]) => [aliasCustKey(k), v]))
 
 let cache: CustIndex | null = null

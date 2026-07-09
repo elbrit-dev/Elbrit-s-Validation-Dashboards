@@ -83,6 +83,12 @@ export async function listDocs(
   return (json.data as Record<string, unknown>[]) || []
 }
 
+// Fetch a single document (with child tables) by name.
+export async function getDoc(doctype: string, name: string): Promise<Record<string, unknown> | null> {
+  const json = await getJSON(`${ERP.base}/api/resource/${encodeURIComponent(doctype)}/${encodeURIComponent(name)}`, `get ${doctype}`)
+  return (json.data as Record<string, unknown>) || null
+}
+
 export const createDoc = (doctype: string, doc: Record<string, unknown>) =>
   send('POST', `/api/resource/${encodeURIComponent(doctype)}`, doc)
 

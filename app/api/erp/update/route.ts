@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
-import { assertConfigured, updateDoc } from '@/lib/server/erpnext'
+import { assertConfigured, getDoc, updateDoc } from '@/lib/server/erpnext'
 import { mapLimit } from '@/lib/server/retry'
 import { CHILD_TABLE, DOCTYPE } from '@/lib/shared/mapping'
 import type { BatchResponse, RowResult } from '@/lib/shared/types'
 
 // POST { rows: [{ key, erpName, items: [...] }] }  (≤ 50/call)
-// The parent already exists — we replace its `items` child table with the
-// sheet's product lines (PUT of a table field overwrites the whole table).
+// The parent already exists (same distributor + date). We MERGE the sheet's
+// product lines into the doc's existing `items` table — APPENDING new products
+// and leaving items from other divisions untouched. Merge key is the item name
+// (a product belongs to one division, so it never repeats across sheets); a
+// re-run of the same division just overlays its own lines (idempotent).
 // Rows are keyed by distinct erpName so no document is written concurrently.
 const MAX_ROWS = 50
 const CONCURRENCY = 5
@@ -39,7 +42,31 @@ export async function POST(req: Request) {
       results.push({ key: row.key, ok: false, error: 'erpName and non-empty items are required' })
       return
     }
-    const out = await updateDoc(DOCTYPE, row.erpName, { [CHILD_TABLE]: items })
+    // Merge sheet items into the doc's existing items, keyed by item name.
+    // Existing rows (incl. their child docname) are preserved so other
+    // divisions' lines stay intact; a matching item is overlaid with the
+    // sheet's values; new items are appended.
+    let merged: unknown[]
+    try {
+      const existing = await getDoc(DOCTYPE, row.erpName)
+      const existingItems = (Array.isArray(existing?.[CHILD_TABLE]) ? (existing![CHILD_TABLE] as Record<string, unknown>[]) : [])
+      const byItem = new Map<string, Record<string, unknown>>()
+      for (const it of existingItems) {
+        const k = String(it.item ?? '').trim()
+        if (k) byItem.set(k, it)
+      }
+      for (const it of items as Record<string, unknown>[]) {
+        const k = String(it.item ?? '').trim()
+        if (!k) continue
+        const prev = byItem.get(k)
+        byItem.set(k, prev ? { ...prev, ...it } : it) // preserve existing child name, overlay sheet values
+      }
+      merged = [...byItem.values()]
+    } catch (e) {
+      results.push({ key: row.key, ok: false, erpName: row.erpName, error: `read existing failed: ${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
+    const out = await updateDoc(DOCTYPE, row.erpName, { [CHILD_TABLE]: merged })
     results.push(
       out.ok
         ? { key: row.key, ok: true, erpName: row.erpName }

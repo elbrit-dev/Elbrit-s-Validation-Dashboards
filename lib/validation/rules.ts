@@ -21,6 +21,8 @@ export interface RuleContext {
   raw: Record<string, unknown>
   itemStatus?: 'ok' | 'ambiguous' | 'missing'
   distStatus?: 'ok' | 'ambiguous' | 'missing'
+  roleProfile?: string // custom_role_profile filled by the auto-mapping
+  mapStatus?: 'ok' | 'conflict' | 'unmapped'
 }
 
 export interface Rule {
@@ -94,6 +96,17 @@ export const RULES: Rule[] = [
     description: 'Stockist does not resolve to a UAT Customer.',
     fix: 'Create the customer in UAT or add a customer alias.',
     test: (c) => c.distStatus !== undefined && c.distStatus !== 'ok',
+  },
+  {
+    id: 'role_profile_missing',
+    label: 'Sales team not mapped',
+    severity: 'warning',
+    category: 'Match',
+    // We can't verify the value is correct — only that it got filled by the
+    // create/update-time auto-mapping. Filled = ok, empty = warning.
+    description: 'No role profile / HQ / department was resolved for this line.',
+    fix: "Check the distributor's role profiles and the item's department mapping in UAT.",
+    test: (c) => c.mapStatus !== undefined && !c.roleProfile,
   },
   {
     id: 'no_quantities',

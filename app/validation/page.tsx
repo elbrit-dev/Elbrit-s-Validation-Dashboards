@@ -38,7 +38,18 @@ export default function ValidationPage() {
       setSession(s)
       const rows = await getDb().rows.where('sessionId').equals(s.id).toArray()
       rows.sort((a, b) => (a.rid || 0) - (b.rid || 0))
-      setVrows(rows.map((row) => ({ row, issues: validateRow({ raw: row.raw, itemStatus: row.itemStatus, distStatus: row.distStatus }) })))
+      setVrows(
+        rows.map((row) => ({
+          row,
+          issues: validateRow({
+            raw: row.raw,
+            itemStatus: row.itemStatus,
+            distStatus: row.distStatus,
+            roleProfile: row.custom_role_profile,
+            mapStatus: row.mapStatus,
+          }),
+        })),
+      )
       setLoading(false)
     })()
   }, [])
@@ -247,7 +258,8 @@ function ValidationDrawer({ v, onClose }: { v: VRow; onClose: () => void }) {
             // UAT has run — otherwise show "not checked" instead of a false pass.
             const needsUat =
               (r.id === 'item_unresolved' && v.row.itemStatus === undefined) ||
-              (r.id === 'distributor_unresolved' && v.row.distStatus === undefined)
+              (r.id === 'distributor_unresolved' && v.row.distStatus === undefined) ||
+              (r.id === 'role_profile_missing' && v.row.mapStatus === undefined)
             return (
               <div key={r.id} style={{ display: 'contents' }}>
                 <span className="k">{r.label}</span>

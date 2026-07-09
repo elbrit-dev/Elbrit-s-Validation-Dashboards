@@ -12,7 +12,7 @@ import { downloadFile } from '@/lib/client/driveClient'
 import { parseFile, triageAll, exportXlsx } from '@/lib/client/workers'
 import { runInBatches } from '@/lib/client/batchRunner'
 import { getDb, latestSession, clearSession, requestPersistence, type RowRec, type SessionRec } from '@/lib/client/db'
-import { childRow, distributorOf, dateOf, firstValue, splitKey } from '@/lib/shared/mapping'
+import { childRow, distributorOf, dateOf, firstValue, splitKey, KEY_SEP } from '@/lib/shared/mapping'
 import type { ErpSummary, RowResult, TriageAction } from '@/lib/shared/types'
 
 const LOOKUP_CHUNK = 90
@@ -28,8 +28,26 @@ type Busy =
   | { kind: 'run'; op: string; done: number; total: number }
   | { kind: 'scan'; count: number }
 
-// Result of matching a sheet product name to a canonical UAT Item.
+// Result of matching a sheet product / stockist to a canonical UAT record.
 type ItemMatch = { status: 'ok' | 'ambiguous' | 'missing'; name: string; options?: string[] }
+type CustomerMatch = ItemMatch
+
+// POST JSON with 3 retries + backoff; throws with the server's error message.
+async function postJson(endpoint: string, body: unknown): Promise<Record<string, unknown>> {
+  let lastErr = ''
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error((json.detail as string) || (json.error as string) || `HTTP ${res.status}`)
+      return json
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e)
+      if (attempt < 2) await sleep(1200 * (attempt + 1))
+    }
+  }
+  throw new Error(lastErr || 'request failed')
+}
 
 interface Health {
   erp: { configured: boolean; base: string | null }
@@ -162,83 +180,74 @@ export default function EntryPage() {
     setError('')
     try {
       const db = getDb()
-      const keys = [...new Set(rows.map((r) => r.key).filter(Boolean))]
       await db.erpIndex.where('sessionId').equals(session.id).delete()
+      const RESOLVE_CHUNK = 200
 
-      const indexEntries: [string, ErpSummary][] = []
-      for (let i = 0; i < keys.length; i += LOOKUP_CHUNK) {
-        const slice = keys.slice(i, i + LOOKUP_CHUNK)
-        let ok = false
-        let lastErr = ''
-        for (let attempt = 0; attempt < 3 && !ok; attempt++) {
-          try {
-            const res = await fetch('/api/erp/lookup', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ codes: slice }),
-            })
-            const body = await res.json().catch(() => ({}))
-            if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
-            const records = body.records as Record<string, ErpSummary>
-            const recs = Object.values(records)
-            await db.erpIndex.bulkPut(recs.map((r) => ({ sessionId: session.id, code: r.code, name: r.name, fields: r.fields })))
-            for (const r of recs) indexEntries.push([r.code, r])
-            ok = true
-          } catch (e) {
-            lastErr = e instanceof Error ? e.message : String(e)
-            if (attempt < 2) await sleep(1200 * (attempt + 1))
-          }
-        }
-        if (!ok) throw new Error(`UAT lookup failed: ${lastErr}`)
-        setBusy({ kind: 'lookup', done: Math.min(i + LOOKUP_CHUNK, keys.length), total: keys.length })
+      // 1) resolve Stockist → UAT Customer (the distributor link)
+      const stockists = [...new Set(rows.map((r) => distributorOf(r.raw)).filter(Boolean))]
+      const custMatch = new Map<string, CustomerMatch>()
+      for (let i = 0; i < stockists.length; i += RESOLVE_CHUNK) {
+        const slice = stockists.slice(i, i + RESOLVE_CHUNK)
+        const body = await postJson('/api/erp/resolve-customers', { names: slice })
+        for (const [k, v] of Object.entries((body.resolved || {}) as Record<string, CustomerMatch>)) custMatch.set(k, v)
+        setBusy({ kind: 'resolve', done: Math.min(i + RESOLVE_CHUNK, stockists.length), total: stockists.length })
       }
 
-      // resolve sheet product names → canonical UAT Item names (nomenclature)
+      // 2) resolve Product → UAT Item
       const products = [...new Set(rows.map((r) => firstValue(r.raw, ['Product', 'Product Code'])).filter(Boolean))]
       const itemMatch = new Map<string, ItemMatch>()
-      const RESOLVE_CHUNK = 200
       for (let i = 0; i < products.length; i += RESOLVE_CHUNK) {
         const slice = products.slice(i, i + RESOLVE_CHUNK)
-        let ok = false
-        let lastErr = ''
-        for (let attempt = 0; attempt < 3 && !ok; attempt++) {
-          try {
-            const res = await fetch('/api/erp/resolve-items', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ names: slice }),
-            })
-            const body = await res.json().catch(() => ({}))
-            if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
-            const resolved = (body.resolved || {}) as Record<string, ItemMatch>
-            for (const [k, v] of Object.entries(resolved)) itemMatch.set(k, v)
-            ok = true
-          } catch (e) {
-            lastErr = e instanceof Error ? e.message : String(e)
-            if (attempt < 2) await sleep(1200 * (attempt + 1))
-          }
-        }
-        if (!ok) throw new Error(`Item resolve failed: ${lastErr}`)
+        const body = await postJson('/api/erp/resolve-items', { names: slice })
+        for (const [k, v] of Object.entries((body.resolved || {}) as Record<string, ItemMatch>)) itemMatch.set(k, v)
         setBusy({ kind: 'resolve', done: Math.min(i + RESOLVE_CHUNK, products.length), total: products.length })
       }
 
+      // 3) look up existing docs by the RESOLVED customer + date (so an existing
+      //    doc is detected even though the sheet spells the distributor loosely).
+      const rawKeys = [...new Set(rows.map((r) => r.key).filter(Boolean))]
+      const resToRaw = new Map<string, string>() // resolved lookup key → sheet key
+      for (const rk of rawKeys) {
+        const { distributor, date } = splitKey(rk)
+        const cust = custMatch.get(distributor)
+        resToRaw.set(`${cust?.name || distributor}${KEY_SEP}${date}`, rk)
+      }
+      const lookupKeys = [...resToRaw.keys()]
+      const indexEntries: [string, ErpSummary][] = []
+      for (let i = 0; i < lookupKeys.length; i += LOOKUP_CHUNK) {
+        const slice = lookupKeys.slice(i, i + LOOKUP_CHUNK)
+        const body = await postJson('/api/erp/lookup', { codes: slice })
+        for (const rec of Object.values((body.records || {}) as Record<string, ErpSummary>)) {
+          const rawKey = resToRaw.get(rec.code) || rec.code
+          indexEntries.push([rawKey, { name: rec.name, code: rawKey, fields: rec.fields }])
+          await db.erpIndex.bulkPut([{ sessionId: session.id, code: rawKey, name: rec.name, fields: rec.fields }])
+        }
+        setBusy({ kind: 'lookup', done: Math.min(i + LOOKUP_CHUNK, lookupKeys.length), total: lookupKeys.length })
+      }
+
+      // 4) triage + annotate item and distributor resolution
       setBusy({ kind: 'triage' })
       const results = await triageAll(rows.map((r) => ({ key: r.key, raw: r.raw })), indexEntries)
       const updated = rows.map((r, i) => {
-        const prod = firstValue(r.raw, ['Product', 'Product Code'])
-        const m = itemMatch.get(prod)
-        const itemStatus = m?.status ?? 'missing'
-        // A row whose item can't be resolved becomes a conflict — it is excluded
-        // from write groups until the sheet nomenclature is fixed.
-        const action: TriageAction = results[i].action === 'conflict' || itemStatus !== 'ok' ? 'conflict' : results[i].action
+        const im = itemMatch.get(firstValue(r.raw, ['Product', 'Product Code']))
+        const itemStatus = im?.status ?? 'missing'
+        const cm = custMatch.get(distributorOf(r.raw))
+        const distStatus: 'ok' | 'ambiguous' | 'missing' = r.key ? cm?.status ?? 'missing' : 'missing'
+        // A row is a conflict (excluded from writes) if its item OR its
+        // distributor can't be resolved, or it has no key.
+        const bad = results[i].action === 'conflict' || itemStatus !== 'ok' || distStatus !== 'ok'
+        const action: TriageAction = bad ? 'conflict' : results[i].action
         return {
           ...r,
           action,
           erpName: results[i].erpName,
           changed: results[i].changed,
-          resolvedItem: m?.name || '',
+          resolvedItem: im?.name || '',
           itemStatus,
-          itemOptions: m?.options,
+          itemOptions: im?.options,
+          resolvedDistributor: cm?.name || '',
+          distStatus,
+          distOptions: cm?.options,
           runStatus: undefined,
           runError: undefined,
         }
@@ -267,8 +276,9 @@ export default function EntryPage() {
       // ERP error to the console, so you can see exactly which item is rejected.
       if (!res.ok) {
         const { distributor, date } = splitKey(res.key)
+        const cust = group.rows[0]?.resolvedDistributor || distributor
         // eslint-disable-next-line no-console
-        console.error(`✗ ${op} failed — ${distributor} · ${date}\n${res.error}`)
+        console.error(`✗ ${op} failed — ${distributor} → ${cust} · ${date}\n${res.error}`)
         // eslint-disable-next-line no-console
         console.table(
           group.rows.map((r) => ({
@@ -320,7 +330,7 @@ export default function EntryPage() {
           buildBody: (slice) => ({
             rows: slice.map((g) => ({
               key: g.key,
-              doc: { distributor: distributorOf(g.rows[0].raw), date: dateOf(g.rows[0].raw), items: groupItems(g.rows) },
+              doc: { distributor: g.rows[0].resolvedDistributor || distributorOf(g.rows[0].raw), date: dateOf(g.rows[0].raw), items: groupItems(g.rows) },
             })),
           }),
           onResult: (res) => applyGroupResults(res, 'create', byKey),
@@ -432,6 +442,8 @@ export default function EntryPage() {
   const doExport = async () => {
     const toRow = (r: RowRec) => ({
       distributor: distributorOf(r.raw),
+      distributorUat: r.resolvedDistributor || '',
+      distStatus: r.distStatus || '',
       date: dateOf(r.raw),
       month: r.monthTag,
       file: r.fileName,
@@ -449,6 +461,8 @@ export default function EntryPage() {
       if (r.runStatus === 'error') return `write failed: ${r.runError || 'unknown error'}`
       if (r.action === 'conflict') {
         if (!r.key) return 'missing distributor or date'
+        if (r.distStatus === 'missing') return 'distributor (customer) not found in UAT'
+        if (r.distStatus === 'ambiguous') return `distributor ambiguous: ${(r.distOptions || []).join(' | ')}`
         if (r.itemStatus === 'missing') return 'item not found in UAT (Products)'
         if (r.itemStatus === 'ambiguous') return `item ambiguous: ${(r.itemOptions || []).join(' | ')}`
         return 'conflict'
@@ -519,7 +533,22 @@ export default function EntryPage() {
   const isBusy = busy.kind !== 'none'
 
   const columns: VColumn<RowRec>[] = [
-    { key: 'distributor', header: 'Distributor', width: 200, render: (r) => distributorOf(r.raw) || <span className="muted">—</span> },
+    { key: 'distributor', header: 'Distributor (sheet)', width: 190, render: (r) => distributorOf(r.raw) || <span className="muted">—</span> },
+    {
+      key: 'distuat',
+      header: 'Distributor → UAT',
+      width: 190,
+      render: (r) =>
+        r.distStatus === 'ok' ? (
+          <span className="mono" style={{ color: 'var(--green)' }}>{r.resolvedDistributor}</span>
+        ) : r.distStatus === 'ambiguous' ? (
+          <span className="pill amber" title={(r.distOptions || []).join(', ')}>ambiguous</span>
+        ) : r.distStatus === 'missing' ? (
+          <span className="pill error">not found</span>
+        ) : (
+          <span className="muted">—</span>
+        ),
+    },
     { key: 'date', header: 'Date', width: 110, render: (r) => dateOf(r.raw) || <span className="muted">—</span> },
     { key: 'month', header: 'Month', width: 80, render: (r) => r.monthTag },
     { key: 'product', header: 'Product (sheet)', width: 200, render: (r) => firstValue(r.raw, ['Product', 'Product Code']) || <span className="muted">—</span> },
@@ -746,6 +775,16 @@ function RowDrawer({ row, onClose }: { row: RowRec; onClose: () => void }) {
           <div className={row.runStatus === 'done' ? 'ok-box' : 'error-box'}>
             {row.runStatus === 'done' ? `Written (${row.runOp}) → ${row.runResultName || row.erpName}` : `Write failed: ${row.runError}`}
           </div>
+        )}
+        {row.distStatus && row.distStatus !== 'ok' && (
+          <div className="warn-box small">
+            Distributor <span className="mono">{distributorOf(row.raw)}</span>{' '}
+            {row.distStatus === 'missing' ? 'has no matching UAT customer' : 'is ambiguous'} — this doc is left out of the write.
+            {(row.distOptions?.length ?? 0) > 0 && <> Candidates: {row.distOptions!.join(', ')}</>}
+          </div>
+        )}
+        {row.distStatus === 'ok' && row.resolvedDistributor && (
+          <p className="muted small">Distributor → UAT: <span className="mono" style={{ color: 'var(--green)' }}>{row.resolvedDistributor}</span></p>
         )}
         {row.itemStatus && row.itemStatus !== 'ok' && (
           <div className="warn-box small">

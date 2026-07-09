@@ -80,7 +80,9 @@ export const ITEM_ALIASES: Record<string, string> = {
   'TRIGLIMIBRIT 23': 'TRIGLIMIBRIT 2.3',
 }
 
-// Sheet Stockist  →  UAT Customer (for when we resolve the distributor link)
+// Sheet Stockist  →  UAT Customer (distributor link). Left side is matched
+// case/punctuation-insensitively; right side is the exact UAT Customer name.
 export const CUSTOMER_ALIASES: Record<string, string> = {
-  // 'AROGYA MEDICAL AND SURGICAL AGENCIES': 'Arogya Medical & Surgical Agencies',
+  'DIVYA PHARMA DIST': 'Divya Pharma Distributors Pvt Ltd',
+  'VENKATASAI AGENCIES DRUGS PVT LTD UPPAL': 'Venkatasai Agencies Drugs Pvt Ltd',
 }

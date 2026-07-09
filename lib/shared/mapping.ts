@@ -98,6 +98,17 @@ export function normalizeItem(s: string): string {
     .trim()
 }
 
+// Nomenclature key for matching a sheet Stockist to a UAT Customer name.
+// Case/punctuation-insensitive with single spaces — "MARUTHI AGENCIES" matches
+// the canonical "Maruthi Agencies"; harder cases go through CUSTOMER_ALIASES.
+export function normalizeCustomer(s: string): string {
+  return String(s ?? '')
+    .replace(/[^\x00-\x7F]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+}
+
 // First non-empty value among a spec's candidate headers (ellipsis stripped).
 export function firstValue(raw: Record<string, unknown>, headers: string[]): string {
   for (const h of headers) {

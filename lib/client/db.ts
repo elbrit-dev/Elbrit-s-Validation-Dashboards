@@ -28,6 +28,10 @@ export interface RowRec {
   resolvedItem?: string // canonical UAT Item name when itemStatus === 'ok'
   itemStatus?: 'ok' | 'ambiguous' | 'missing'
   itemOptions?: string[] // candidate names when ambiguous
+  // Stockist → UAT Customer resolution (the distributor link).
+  resolvedDistributor?: string // canonical UAT Customer name when distStatus === 'ok'
+  distStatus?: 'ok' | 'ambiguous' | 'missing'
+  distOptions?: string[]
   runOp?: 'create' | 'update'
   runStatus?: RunStatus
   runError?: string

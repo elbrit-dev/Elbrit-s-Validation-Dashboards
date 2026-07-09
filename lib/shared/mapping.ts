@@ -87,6 +87,18 @@ export function normalizeItem(s: string): string {
     .replace(/[^A-Z0-9]/g, '')
 }
 
+// Key for the manual alias table (ITEM_ALIASES). Unlike normalizeItem this is
+// SPACE-PRESERVING — each run of punctuation/space collapses to ONE space — so
+// "BISOBRIT 2 5" (=2.5) stays distinct from "BISOBRIT 25" (=25), which map to
+// different items. Used for both the alias keys and the incoming sheet name.
+export function aliasKey(s: string): string {
+  return stripEllipsis(String(s ?? ''))
+    .replace(/\([^)]*\)/g, ' ')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+}
+
 // First non-empty value among a spec's candidate headers (ellipsis stripped).
 export function firstValue(raw: Record<string, unknown>, headers: string[]): string {
   for (const h of headers) {

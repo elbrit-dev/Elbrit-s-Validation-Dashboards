@@ -101,4 +101,11 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'R.S.DRUGS AND MEDICALS PVT LTD': 'R.S. Drugs and Medicals Private Limited',
   'YOGIRAM HEALTHCARE': 'Yogiram Distributors Private Limited Anx',
   'PALEPU PHARMA PVT LTD TAMBARAM': 'Palepu Pharma Dist Pvt Ltd Tambaram',
+  'SRI ANDAVAR': 'Sri Andavar Trichy Pharmaceuticals',
+  'SRI SELVAGANESH MEDICALS AGENCIES': 'Sri Selva Ganesh Medicals Agencies',
+  'DR.SUNDARARAJAN NEURO HOSPITAL PVT LTD': 'Dr Sundarajan Neuro Hospital Pvt Ltd',
+  'SRI LAKSHMI MEDICAL CENTRE & HOSPITAL': 'Sri Lakshmi Medical Centre  &  Hospital Pharmacy',
+  'OPTIVAL HEALTH SOLUTIONS PVT LTD': 'Optival Health Solutions Private Limited',
+  'PALEPU PHARMA DIST PVT LTD MYLAPORE': 'Palepu Pharma Distributors Pvt Ltd Mylapore',
+  'SURESH PHARMA AGENCIES CH PVT LTD': 'Suresh Pharma Agencies (Chennai) Private Limited',
 }

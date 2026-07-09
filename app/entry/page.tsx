@@ -544,10 +544,12 @@ export default function EntryPage() {
   // Counts are per DOCUMENT (distinct distributor+date key), not per product
   // row — many product rows collapse into one Secondary Data Entry doc.
   const counts = useMemo(() => {
-    const c = { create: 0, update: 0, unchanged: 0, conflict: 0, done: 0, failed: 0 }
+    const c = { create: 0, update: 0, unchanged: 0, conflict: 0, blocked: 0, done: 0, failed: 0 }
     const seenCreate = new Set<string>(), seenUpdate = new Set<string>(), seenUnchanged = new Set<string>()
     const seenDone = new Set<string>(), seenFailed = new Set<string>()
+    const allKeys = new Set<string>() // every doc key seen (incl. conflict-only docs)
     for (const r of rows) {
+      if (r.key) allKeys.add(r.key)
       if (r.action === 'conflict') { c.conflict++; continue } // rows that can't form a doc
       if (!r.key) continue
       if (r.action === 'create' && !seenCreate.has(r.key)) { seenCreate.add(r.key); c.create++ }
@@ -555,6 +557,11 @@ export default function EntryPage() {
       else if (r.action === 'unchanged' && !seenUnchanged.has(r.key)) { seenUnchanged.add(r.key); c.unchanged++ }
       if (r.runStatus === 'done' && !seenDone.has(r.key)) { seenDone.add(r.key); c.done++ }
       if (r.runStatus === 'error' && !seenFailed.has(r.key)) { seenFailed.add(r.key); c.failed++ }
+    }
+    // Blocked docs: a doc (distributor+date) with NO writable row — every line
+    // is a conflict (e.g. distributor not found), so it can't be created.
+    for (const k of allKeys) {
+      if (!seenCreate.has(k) && !seenUpdate.has(k) && !seenUnchanged.has(k)) c.blocked++
     }
     return c
   }, [rows])
@@ -693,7 +700,7 @@ export default function EntryPage() {
                 <div className="kpi green"><div className="label">Docs to create</div><div className="value">{counts.create.toLocaleString()}</div></div>
                 <div className="kpi blue"><div className="label">Docs to update</div><div className="value">{counts.update.toLocaleString()}</div></div>
                 <div className="kpi"><div className="label">Unchanged docs</div><div className="value">{counts.unchanged.toLocaleString()}</div></div>
-                <div className="kpi amber"><div className="label">Conflict rows</div><div className="value">{counts.conflict.toLocaleString()}</div></div>
+                <div className="kpi amber" title={`${counts.conflict.toLocaleString()} conflict rows`}><div className="label">Can&apos;t create (docs)</div><div className="value">{counts.blocked.toLocaleString()}</div></div>
                 <div className="kpi green"><div className="label">Docs written OK</div><div className="value">{counts.done.toLocaleString()}</div></div>
                 <div className="kpi red"><div className="label">Docs with errors</div><div className="value">{counts.failed.toLocaleString()}</div></div>
               </div>

@@ -17,7 +17,7 @@
 
 // Sheet Product  →  UAT Item (item_group "Products")
 export const ITEM_ALIASES: Record<string, string> = {
-  'BISOBRIT 2 5': 'BISOBRIT T 2.5',
+  'BISOBRIT 2 5': 'BISOBRIT 2.5',
   'BISOBRIT 25': 'BISOBRIT 2.5',
   'BISOBRIT T 25': 'BISOBRIT T 2.5',
   'BRITORVA CV': 'BRITORVA CV 10',

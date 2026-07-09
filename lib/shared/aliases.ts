@@ -87,4 +87,9 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'VENKATASAI AGENCIES DRUGS PVT LTD UPPAL': 'Venkatasai Agencies Drugs Pvt Ltd',
   'SRI VENKATESHWARA GALAXY MEDICAL DISTRIBUTORS PRIVATE': 'Sri Venkateswara Galaxy Medical Distributors Private Limited',
   'VARDHMAN MEDISALES PVT LTD MANGALORE': 'Vardhaman Medisales Pvt Ltd Mangalore',
+  'AYUSH PHARMA': 'M/S Ayush Pharma',
+  'GOPAL MEDICALS': 'M/S Gopal Medicales',
+  'NEW JAISWAL MEDICOS': 'New Jaiswal Medicose',
+  'D.P Medicose': 'D.P Medicos',
+  'LUCKY PHARMA LOGISTICS PVT LTD': 'Lucky Pharma Logistics Private Limited',
 }

@@ -37,7 +37,7 @@ export default function ValidationPage() {
       setSession(s)
       const rows = await getDb().rows.where('sessionId').equals(s.id).toArray()
       rows.sort((a, b) => (a.rid || 0) - (b.rid || 0))
-      setVrows(rows.map((row) => ({ row, issues: validateRow(row.raw) })))
+      setVrows(rows.map((row) => ({ row, issues: validateRow({ raw: row.raw, itemStatus: row.itemStatus, distStatus: row.distStatus }) })))
       setLoading(false)
     })()
   }, [])

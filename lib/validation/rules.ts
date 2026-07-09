@@ -16,6 +16,13 @@ export const SEVERITY = {
 
 export type SeverityKey = keyof typeof SEVERITY
 
+// A row plus its UAT-resolution status (set once "Check with UAT" has run).
+export interface RuleContext {
+  raw: Record<string, unknown>
+  itemStatus?: 'ok' | 'ambiguous' | 'missing'
+  distStatus?: 'ok' | 'ambiguous' | 'missing'
+}
+
 export interface Rule {
   id: string
   label: string
@@ -23,7 +30,7 @@ export interface Rule {
   category: string
   description: string
   fix: string
-  test: (raw: Record<string, unknown>) => boolean // true = FAILS the check
+  test: (ctx: RuleContext) => boolean // true = FAILS the check
 }
 
 // Sheet headers for a mapped field key (parent or child).
@@ -47,7 +54,7 @@ export const RULES: Rule[] = [
     category: 'Identity',
     description: 'Stockist (distributor) column is blank.',
     fix: 'Fill in the Stockist.',
-    test: (raw) => !has(raw, 'distributor'),
+    test: (c) => !has(c.raw, 'distributor'),
   },
   {
     id: 'item_missing',
@@ -56,7 +63,7 @@ export const RULES: Rule[] = [
     category: 'Identity',
     description: 'Product (item) column is blank.',
     fix: 'Fill in the Product.',
-    test: (raw) => !has(raw, 'item'),
+    test: (c) => !has(c.raw, 'item'),
   },
   {
     id: 'date_missing',
@@ -65,7 +72,25 @@ export const RULES: Rule[] = [
     category: 'Identity',
     description: 'Date column is blank or not a valid date.',
     fix: 'Fill in the Date (YYYY-MM-DD).',
-    test: (raw) => !has(raw, 'date'),
+    test: (c) => !has(c.raw, 'date'),
+  },
+  {
+    id: 'item_unresolved',
+    label: 'Item not found in UAT',
+    severity: 'error',
+    category: 'Match',
+    description: 'Product does not resolve to a UAT Item (Products).',
+    fix: 'Fix the product name in the sheet or add an item alias.',
+    test: (c) => c.itemStatus !== undefined && c.itemStatus !== 'ok',
+  },
+  {
+    id: 'distributor_unresolved',
+    label: 'Distributor not found in UAT',
+    severity: 'error',
+    category: 'Match',
+    description: 'Stockist does not resolve to a UAT Customer.',
+    fix: 'Create the customer in UAT or add a customer alias.',
+    test: (c) => c.distStatus !== undefined && c.distStatus !== 'ok',
   },
   {
     id: 'secondary_qty_zero',
@@ -74,7 +99,7 @@ export const RULES: Rule[] = [
     category: 'Secondary',
     description: 'Secondary (Qty) is blank or 0.',
     fix: 'Enter the secondary sales quantity.',
-    test: (raw) => numBlank(raw, 'sales_qty'),
+    test: (c) => numBlank(c.raw, 'sales_qty'),
   },
   {
     id: 'secondary_val_zero',
@@ -83,7 +108,7 @@ export const RULES: Rule[] = [
     category: 'Secondary',
     description: 'Secondary (Val) is blank or 0.',
     fix: 'Enter the secondary sales value.',
-    test: (raw) => numBlank(raw, 'sales_value'),
+    test: (c) => numBlank(c.raw, 'sales_value'),
   },
   {
     id: 'closing_qty_zero',
@@ -92,7 +117,7 @@ export const RULES: Rule[] = [
     category: 'Closing',
     description: 'Closing (Qty) is blank or 0.',
     fix: 'Confirm the closing quantity.',
-    test: (raw) => numBlank(raw, 'closing_qty'),
+    test: (c) => numBlank(c.raw, 'closing_qty'),
   },
 ]
 
@@ -105,11 +130,11 @@ export interface RowIssues {
   status: 'error' | 'warning' | 'ready'
 }
 
-export function validateRow(raw: Record<string, unknown>): RowIssues {
+export function validateRow(ctx: RuleContext): RowIssues {
   const ruleIds: string[] = []
   const counts: Record<SeverityKey, number> = { error: 0, warning: 0, info: 0 }
   for (const rule of RULES) {
-    if (rule.test(raw)) {
+    if (rule.test(ctx)) {
       ruleIds.push(rule.id)
       counts[rule.severity]++
     }

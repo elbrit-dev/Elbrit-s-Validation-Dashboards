@@ -86,4 +86,5 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'DIVYA PHARMA DIST': 'Divya Pharma Distributors Pvt Ltd',
   'VENKATASAI AGENCIES DRUGS PVT LTD UPPAL': 'Venkatasai Agencies Drugs Pvt Ltd',
   'SRI VENKATESHWARA GALAXY MEDICAL DISTRIBUTORS PRIVATE': 'Sri Venkateswara Galaxy Medical Distributors Private Limited',
+  'VARDHMAN MEDISALES PVT LTD MANGALORE': 'Vardhaman Medisales Pvt Ltd Mangalore',
 }

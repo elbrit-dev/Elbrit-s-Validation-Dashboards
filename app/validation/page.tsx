@@ -8,6 +8,7 @@ import ErrorBoundary from '@/components/ErrorBoundary'
 import VirtualTable, { type VColumn } from '@/components/VirtualTable'
 import { getDb, latestSession, type RowRec, type SessionRec } from '@/lib/client/db'
 import { RULES, RULE_BY_ID, validateRow, type RowIssues } from '@/lib/validation/rules'
+import { distributorOf, firstValue } from '@/lib/shared/mapping'
 import { exportXlsx } from '@/lib/client/workers'
 
 interface VRow {
@@ -174,6 +175,32 @@ export default function ValidationPage() {
   )
 }
 
+// One "sheet value → UAT value" line in the drawer's UAT-match block.
+function MatchLine({
+  sheet,
+  resolved,
+  status,
+  options,
+}: {
+  sheet: string
+  resolved?: string
+  status?: 'ok' | 'ambiguous' | 'missing'
+  options?: string[]
+}) {
+  if (!status) return <span className="muted">— run “Check with UAT” first</span>
+  if (status === 'ok')
+    return (
+      <span>
+        <span className="mono">{sheet}</span> → <span className="mono" style={{ color: 'var(--green)' }}>{resolved}</span>
+      </span>
+    )
+  return (
+    <span style={{ color: 'var(--red)' }} title={(options || []).join(', ')}>
+      <span className="mono">{sheet}</span> → ✗ {status === 'missing' ? 'not found in UAT' : `ambiguous (${(options || []).length} matches)`}
+    </span>
+  )
+}
+
 function ValidationDrawer({ v, onClose }: { v: VRow; onClose: () => void }) {
   return (
     <>
@@ -186,6 +213,17 @@ function ValidationDrawer({ v, onClose }: { v: VRow; onClose: () => void }) {
         <p className="muted small">
           {v.row.fileName} · {v.row.monthTag} · <span className={`pill ${v.issues.status}`}>{v.issues.status}</span> · score {v.issues.score}
         </p>
+        <h4>UAT match</h4>
+        <div className="kv">
+          <div style={{ display: 'contents' }}>
+            <span className="k">Distributor → UAT</span>
+            <MatchLine sheet={distributorOf(v.row.raw)} resolved={v.row.resolvedDistributor} status={v.row.distStatus} options={v.row.distOptions} />
+          </div>
+          <div style={{ display: 'contents' }}>
+            <span className="k">Item → UAT</span>
+            <MatchLine sheet={firstValue(v.row.raw, ['Product', 'Product Code'])} resolved={v.row.resolvedItem} status={v.row.itemStatus} options={v.row.itemOptions} />
+          </div>
+        </div>
         <h4>Checks</h4>
         <div className="kv">
           {RULES.map((r) => {

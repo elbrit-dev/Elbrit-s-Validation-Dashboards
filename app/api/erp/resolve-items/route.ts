@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
 import { assertConfigured, listDocs } from '@/lib/server/erpnext'
-import { normalizeItem, aliasKey } from '@/lib/shared/mapping'
+import { normalizeItem } from '@/lib/shared/mapping'
 import { ITEM_ALIASES } from '@/lib/shared/aliases'
 
-// Manual aliases keyed by the space-preserving alias key → canonical UAT name.
-const ALIAS_BY_KEY = new Map<string, string>(Object.entries(ITEM_ALIASES).map(([k, v]) => [aliasKey(k), v]))
+// Manual aliases keyed by the normalized nomenclature key → canonical UAT name.
+const ALIAS_BY_KEY = new Map<string, string>(Object.entries(ITEM_ALIASES).map(([k, v]) => [normalizeItem(k), v]))
 
 // POST { names: string[] }  → { resolved: { [sheetName]: ItemMatch } }
 // Maps freehand sheet product names to the canonical UAT Item name using a
@@ -57,10 +57,10 @@ async function getIndex(): Promise<ItemIndex> {
 }
 
 function match(idx: ItemIndex, raw: string): ItemMatch {
-  // Manual alias (space-preserving key) redirects the search to the canonical
-  // UAT name; we then match that against the Item master so we still return the
-  // exact record spelling (and flag it if the target isn't in the Products group).
-  const aliasTarget = ALIAS_BY_KEY.get(aliasKey(raw))
+  // Manual alias redirects the search to the canonical UAT name; we then match
+  // that against the Item master so we still return the exact record spelling
+  // (and flag it if the target isn't in the Products group).
+  const aliasTarget = ALIAS_BY_KEY.get(normalizeItem(raw))
   const norm = normalizeItem(aliasTarget || raw)
   if (!norm) return { status: 'missing', name: '' }
 

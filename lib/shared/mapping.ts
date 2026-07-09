@@ -73,29 +73,28 @@ export function stripEllipsis(s: string): string {
   return s.replace(/\s*(?:\.{3,}|…)\s*$/, '').trim()
 }
 
-// Nomenclature key for matching a sheet product to a UAT Item name: drop the
-// ellipsis, drop parenthetical pack descriptors like "(8 PACKS)", uppercase, and
-// remove every non-alphanumeric char so freehand spellings collapse to one form:
-//   "BRITVOG M0.2" / "BRITVOG M 0.2"        → "BRITVOGM02"
-//   "NEURONZ - D" / "NEURONZ D"             → "NEURONZD"
-//   "MY 20" / "MY20"                        → "MY20"
-//   "CALBRIT 60K (8 PACKS)" / "CALBRIT 60K" → "CALBRIT60K"
+// Nomenclature key for matching a sheet product to a UAT Item name — the agreed
+// standard. Drop "(8 PACKS)"-style notes, turn dashes into spaces, drop non-ASCII
+// (e.g. the "…" ellipsis), then tokenise letters vs number/dot/slash runs with a
+// single space between, uppercase, and remove dots. Applied to BOTH sides.
+//   "BRITVOG M0.2" / "BRITVOG M 0.2"        → "BRITVOG M 02"
+//   "NEURONZ - D" / "NEURONZ D"             → "NEURONZ D"
+//   "MY 20" / "MY20"                        → "MY 20"
+//   "BRITORVA 10F" / "BRITORVA 10 F"        → "BRITORVA 10 F"
+//   "CALBRIT 60K (8 PACKS)" / "CALBRIT 60K" → "CALBRIT 60 K"
 export function normalizeItem(s: string): string {
-  return stripEllipsis(String(s ?? ''))
+  return String(s ?? '')
     .replace(/\([^)]*\)/g, ' ') // remove "(8 PACKS)" and similar parenthetical notes
+    .replace(/-/g, ' ') // dashes → space
+    .replace(/[^\x00-\x7F]/g, '') // drop non-ASCII (…, etc.)
+    .split(/([\d/.\s]+)/) // split keeping number / slash / dot / space runs
+    .filter((x) => x.trim() !== '')
+    .map((x) => x.trim())
+    .join(' ')
     .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '')
-}
-
-// Key for the manual alias table (ITEM_ALIASES). Unlike normalizeItem this is
-// SPACE-PRESERVING — each run of punctuation/space collapses to ONE space — so
-// "BISOBRIT 2 5" (=2.5) stays distinct from "BISOBRIT 25" (=25), which map to
-// different items. Used for both the alias keys and the incoming sheet name.
-export function aliasKey(s: string): string {
-  return stripEllipsis(String(s ?? ''))
-    .replace(/\([^)]*\)/g, ' ')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\./g, '') // drop dots ("2.5" → "25")
+    .replace(/[^A-Z0-9/ ]/g, '') // drop stray symbols like "+" so "C+ZD MAX" == "CZD MAX"
+    .replace(/\s+/g, ' ')
     .trim()
 }
 

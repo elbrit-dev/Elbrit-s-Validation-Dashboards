@@ -108,4 +108,6 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'OPTIVAL HEALTH SOLUTIONS PVT LTD': 'Optival Health Solutions Private Limited',
   'PALEPU PHARMA DIST PVT LTD MYLAPORE': 'Palepu Pharma Distributors Pvt Ltd Mylapore',
   'SURESH PHARMA AGENCIES CH PVT LTD': 'Suresh Pharma Agencies (Chennai) Private Limited',
+  'PURANI HOSPITAL SUPPLIES LTD': 'Purani Hospital Supplies Private Ltd Erd',
+  'SENTHILMURUGAN MEDICAL': 'Senthilmurugan Medical Agences',
 }

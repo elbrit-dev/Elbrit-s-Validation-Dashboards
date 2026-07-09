@@ -39,3 +39,15 @@ export interface BatchResponse {
   /** Row keys the handler did not reach before its soft deadline — re-slice. */
   pending: string[]
 }
+
+export interface LineMapping {
+  custom_role_profile: string
+  custom_hq: string
+  custom_department: string
+}
+export interface MappingResult {
+  itemMap: Record<string, LineMapping>
+  conflicts: Record<string, string[]>
+  unmapped: string[]
+  departments: string[]
+}

@@ -13,7 +13,7 @@ import { parseFile, triageAll, exportXlsx } from '@/lib/client/workers'
 import { runInBatches } from '@/lib/client/batchRunner'
 import { getDb, latestSession, clearSession, requestPersistence, type RowRec, type SessionRec } from '@/lib/client/db'
 import { childRow, distributorOf, dateOf, firstValue, splitKey, KEY_SEP } from '@/lib/shared/mapping'
-import type { ErpSummary, RowResult, TriageAction } from '@/lib/shared/types'
+import type { ErpSummary, RowResult, TriageAction, MappingResult } from '@/lib/shared/types'
 
 const LOOKUP_CHUNK = 90
 const WRITE_BATCH = 40
@@ -96,7 +96,13 @@ function rowProblem(r: RowRec): string {
 // check time (falls back to the raw product name — but such rows are conflicts
 // and never reach a write group).
 function groupItems(rs: RowRec[]): Record<string, unknown>[] {
-  return rs.map((r) => ({ ...childRow(r.raw), item: r.resolvedItem || firstValue(r.raw, ['Product', 'Product Code']) }))
+  return rs.map((r) => {
+    const line: Record<string, unknown> = { ...childRow(r.raw), item: r.resolvedItem || firstValue(r.raw, ['Product', 'Product Code']) }
+    if (r.custom_role_profile) line.custom_role_profile = r.custom_role_profile
+    if (r.custom_hq) line.custom_hq = r.custom_hq
+    if (r.custom_department) line.custom_department = r.custom_department
+    return line
+  })
 }
 
 async function bulkPutChunked(rows: RowRec[]) {
@@ -267,6 +273,39 @@ export default function EntryPage() {
           runError: undefined,
         }
       })
+
+      // auto-map sales team (ERPNext "Apply Mapping"); date-scoped, non-blocking
+      const mapGroups = new Map<string, { distributor: string; date: string; items: Set<string> }>()
+      for (const r of updated) {
+        if (r.action === 'conflict' || r.distStatus !== 'ok' || r.itemStatus !== 'ok' || !r.resolvedDistributor || !r.resolvedItem) continue
+        const date = splitKey(r.key).date || dateOf(r.raw)
+        const gk = `${r.resolvedDistributor}${KEY_SEP}${date}`
+        const g = mapGroups.get(gk) ?? { distributor: r.resolvedDistributor, date, items: new Set<string>() }
+        g.items.add(r.resolvedItem)
+        mapGroups.set(gk, g)
+      }
+      const mapByGroup = new Map<string, MappingResult>()
+      for (const [gk, g] of mapGroups) {
+        const body = (await postJson('/api/erp/resolve-mapping', { distributor: g.distributor, date: g.date, items: [...g.items] })) as unknown as MappingResult
+        mapByGroup.set(gk, body)
+      }
+      for (const r of updated) {
+        if (r.action === 'conflict' || r.distStatus !== 'ok' || r.itemStatus !== 'ok' || !r.resolvedDistributor || !r.resolvedItem) continue
+        const gm = mapByGroup.get(`${r.resolvedDistributor}${KEY_SEP}${splitKey(r.key).date || dateOf(r.raw)}`)
+        const m = gm?.itemMap[r.resolvedItem]
+        if (m) {
+          r.custom_role_profile = m.custom_role_profile
+          r.custom_hq = m.custom_hq
+          r.custom_department = m.custom_department
+          r.mapStatus = 'ok'
+        } else if (gm && r.resolvedItem in gm.conflicts) {
+          r.mapStatus = 'conflict'
+          r.mapDepartments = gm.conflicts[r.resolvedItem]
+        } else {
+          r.mapStatus = 'unmapped'
+        }
+      }
+
       await bulkPutChunked(updated)
       const rec = { ...session, phase: 'triaged' as const, updatedAt: Date.now() }
       await getDb().sessions.put(rec)
@@ -465,6 +504,10 @@ export default function EntryPage() {
       productSheet: firstValue(r.raw, ['Product', 'Product Code']),
       itemUat: r.resolvedItem || '',
       itemStatus: r.itemStatus || '',
+      roleProfile: r.custom_role_profile || '',
+      hq: r.custom_hq || '',
+      department: r.custom_department || '',
+      mapStatus: r.mapStatus || '',
       action: r.action || '',
       erpRecord: r.runResultName || r.erpName || '',
       runStatus: r.runStatus || '',
@@ -805,6 +848,17 @@ function RowDrawer({ row, onClose }: { row: RowRec; onClose: () => void }) {
         )}
         {row.itemStatus === 'ok' && row.resolvedItem && (
           <p className="muted small">Item → UAT: <span className="mono" style={{ color: 'var(--green)' }}>{row.resolvedItem}</span></p>
+        )}
+        {row.mapStatus === 'ok' && (
+          <p className="muted small">
+            Sales team: <span className="mono" style={{ color: 'var(--green)' }}>{row.custom_role_profile}</span> · {row.custom_hq} · {row.custom_department}
+          </p>
+        )}
+        {row.mapStatus === 'conflict' && (
+          <div className="warn-box small">Sales-team mapping ambiguous — item sold by multiple departments: {(row.mapDepartments || []).join(', ')}</div>
+        )}
+        {row.mapStatus === 'unmapped' && (
+          <p className="muted small">Sales team: no department match for this item + distributor (left blank).</p>
         )}
         {(row.changed?.length ?? 0) > 0 && (
           <>

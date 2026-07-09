@@ -32,6 +32,12 @@ export interface RowRec {
   resolvedDistributor?: string // canonical UAT Customer name when distStatus === 'ok'
   distStatus?: 'ok' | 'ambiguous' | 'missing'
   distOptions?: string[]
+  // Sales-team auto-mapping (ERPNext "Apply Mapping").
+  custom_role_profile?: string
+  custom_hq?: string
+  custom_department?: string
+  mapStatus?: 'ok' | 'conflict' | 'unmapped'
+  mapDepartments?: string[]
   runOp?: 'create' | 'update'
   runStatus?: RunStatus
   runError?: string

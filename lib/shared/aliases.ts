@@ -19,6 +19,7 @@
 export const ITEM_ALIASES: Record<string, string> = {
   'BRITVIT 10': 'BRITVIT',
   'CardiQ': 'CARDI Q',
+  'MYGUT': 'MY GUT',
   'BISOBRIT 2 5': 'BISOBRIT 2.5',
   'BISOBRIT 25': 'BISOBRIT 2.5',
   'BISOBRIT T 25': 'BISOBRIT T 2.5',
@@ -112,4 +113,5 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'SURESH PHARMA AGENCIES CH PVT LTD': 'Suresh Pharma Agencies (Chennai) Private Limited',
   'PURANI HOSPITAL SUPPLIES LTD': 'Purani Hospital Supplies Private Ltd Erd',
   'SENTHILMURUGAN MEDICAL': 'Senthilmurugan Medical Agences',
+  'SENTHILMURUGAN MEDICAL AGENCIES': 'Senthilmurugan Medical Agences',
 }

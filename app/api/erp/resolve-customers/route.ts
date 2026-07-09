@@ -17,10 +17,15 @@ export interface CustomerMatch {
 
 interface CustIndex {
   byNorm: Map<string, string[]>
+  names: Set<string> // exact customer names (for alias targets)
   loadedAt: number
 }
 
-const ALIAS_BY_KEY = new Map<string, string>(Object.entries(CUSTOMER_ALIASES).map(([k, v]) => [normalizeCustomer(k), v]))
+// Alias key keeps punctuation (only case + whitespace normalized) so the sheet's
+// "M M Pharma Distributor" and "M.M. Pharma Distributor" stay distinct — they map
+// to two different UAT customers that the punctuation-stripping key would merge.
+const aliasCustKey = (s: string) => String(s ?? '').replace(/[^\x00-\x7F]/g, '').replace(/\s+/g, ' ').trim().toUpperCase()
+const ALIAS_BY_KEY = new Map<string, string>(Object.entries(CUSTOMER_ALIASES).map(([k, v]) => [aliasCustKey(k), v]))
 
 let cache: CustIndex | null = null
 const TTL_MS = 10 * 60 * 1000
@@ -30,11 +35,13 @@ const HARD_CAP = 100000
 async function getIndex(): Promise<CustIndex> {
   if (cache && Date.now() - cache.loadedAt < TTL_MS) return cache
   const byNorm = new Map<string, string[]>()
+  const names = new Set<string>()
   let offset = 0
   for (;;) {
     const docs = await listDocs('Customer', [], ['name'], { limit: PAGE, offset })
     for (const d of docs) {
       const nm = String(d.name)
+      names.add(nm)
       const norm = normalizeCustomer(nm)
       if (!norm) continue
       const arr = byNorm.get(norm)
@@ -45,13 +52,17 @@ async function getIndex(): Promise<CustIndex> {
     offset += docs.length
     if (offset > HARD_CAP) break
   }
-  cache = { byNorm, loadedAt: Date.now() }
+  cache = { byNorm, names, loadedAt: Date.now() }
   return cache
 }
 
 function match(idx: CustIndex, raw: string): CustomerMatch {
-  const aliasTarget = ALIAS_BY_KEY.get(normalizeCustomer(raw))
-  const norm = normalizeCustomer(aliasTarget || raw)
+  // A manual alias points at the EXACT UAT customer — trust it (skip the
+  // ambiguity check) as long as that customer exists.
+  const aliasTarget = ALIAS_BY_KEY.get(aliasCustKey(raw))
+  if (aliasTarget) return idx.names.has(aliasTarget) ? { status: 'ok', name: aliasTarget } : { status: 'missing', name: '' }
+
+  const norm = normalizeCustomer(raw)
   if (!norm) return { status: 'missing', name: '' }
   const hit = idx.byNorm.get(norm)
   if (hit && hit.length === 1) return { status: 'ok', name: hit[0] }

@@ -92,4 +92,12 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'NEW JAISWAL MEDICOS': 'New Jaiswal Medicose',
   'D.P Medicose': 'D.P Medicos',
   'LUCKY PHARMA LOGISTICS PVT LTD': 'Lucky Pharma Logistics Private Limited',
+  'PALEPU PHARMA PVT. LTD. , MADURAI': 'Palepu Pharma Distributors Pvt Ltd Madur',
+  'SRI SAROJINI ENTERPRISES': 'Sarojini Enterprises',
+  'A M PHARMA': 'AM PHARMA',
+  'M M PHARMA DISTRIBUTOR': 'M M Pharma Distributor',
+  'M.M. PHARMA DISTRIBUTOR': 'M.M. Pharma Distributor',
+  'PURANI HOSPITAL SUPPLIES PRIVATE LTD': 'Purani Hospital Supplies Private  Ltd Cbe',
+  'R.S.DRUGS AND MEDICALS PVT LTD': 'R.S. Drugs and Medicals Private Limited',
+  'YOGIRAM HEALTHCARE': 'Yogiram Distributors Private Limited Anx',
 }

@@ -25,6 +25,7 @@ export interface ItemMatch {
 interface ItemIndex {
   byNorm: Map<string, string[]>
   norms: string[]
+  names: Set<string> // exact item names (for alias targets)
   loadedAt: number
 }
 
@@ -37,11 +38,13 @@ const HARD_CAP = 60000
 async function getIndex(): Promise<ItemIndex> {
   if (cache && Date.now() - cache.loadedAt < TTL_MS) return cache
   const byNorm = new Map<string, string[]>()
+  const names = new Set<string>()
   let offset = 0
   for (;;) {
     const docs = await listDocs('Item', [['item_group', '=', ITEM_GROUP]], ['name'], { limit: PAGE, offset })
     for (const d of docs) {
       const nm = String(d.name)
+      names.add(nm)
       const norm = normalizeItem(nm)
       if (!norm) continue
       const arr = byNorm.get(norm)
@@ -52,16 +55,17 @@ async function getIndex(): Promise<ItemIndex> {
     offset += docs.length
     if (offset > HARD_CAP) break
   }
-  cache = { byNorm, norms: [...byNorm.keys()], loadedAt: Date.now() }
+  cache = { byNorm, norms: [...byNorm.keys()], names, loadedAt: Date.now() }
   return cache
 }
 
 function match(idx: ItemIndex, raw: string): ItemMatch {
-  // Manual alias redirects the search to the canonical UAT name; we then match
-  // that against the Item master so we still return the exact record spelling
-  // (and flag it if the target isn't in the Products group).
+  // A manual alias points at the EXACT UAT item — trust it (skip the ambiguity
+  // check) as long as that item exists; otherwise report missing.
   const aliasTarget = ALIAS_BY_KEY.get(normalizeItem(raw))
-  const norm = normalizeItem(aliasTarget || raw)
+  if (aliasTarget) return idx.names.has(aliasTarget) ? { status: 'ok', name: aliasTarget } : { status: 'missing', name: '' }
+
+  const norm = normalizeItem(raw)
   if (!norm) return { status: 'missing', name: '' }
 
   const exact = idx.byNorm.get(norm)

@@ -21,6 +21,7 @@ export const ITEM_ALIASES: Record<string, string> = {
   'CardiQ': 'CARDI Q',
   'MYGUT': 'MY GUT',
   'NIG C.R 6.4': 'NIG CR 6.4',
+  'Calbrit 60k Sachet': 'CALBRIT 60K SACHET',
   'BISOBRIT 2 5': 'BISOBRIT 2.5',
   'BISOBRIT 25': 'BISOBRIT 2.5',
   'BISOBRIT T 25': 'BISOBRIT T 2.5',
@@ -118,4 +119,7 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'PALEPU PHARMA PVT.LTD.': 'Palepu Pharma Private Ltd - Chennai',
   'MUTHU PHARMA PRIVATE LIMITED': 'Muthu Pharma - A Unit Of Ascent Wellness',
   'LIFECARE PHARMACEUTICALS': 'Lifecare Pharma Private Limited',
+  'AJ ASSOCIATES': 'A J Associates',
+  'DEVI PHARMA WELLNESS PVT LTD': 'Devi Pharma Wellness Private Limited',
+  'WESTERN HEALTHCARE SOLUTIONS PVT LTD': 'Western Healthcare Solutions Private Limited',
 }

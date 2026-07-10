@@ -122,4 +122,5 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'AJ ASSOCIATES': 'A J Associates',
   'DEVI PHARMA WELLNESS PVT LTD': 'Devi Pharma Wellness Private Limited',
   'WESTERN HEALTHCARE SOLUTIONS PVT LTD': 'Western Healthcare Solutions Private Limited',
+  'MEDIHAUXE PHARMACEUTICALS PVT LTD': 'Medihauxe Pharmaceuticals Private Limited',
 }

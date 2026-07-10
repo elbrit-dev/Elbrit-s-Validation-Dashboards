@@ -32,6 +32,28 @@ type Busy =
 type ItemMatch = { status: 'ok' | 'ambiguous' | 'missing'; name: string; options?: string[] }
 type CustomerMatch = ItemMatch
 
+// A single prominent progress line for whatever operation is running.
+// `pct` null = indeterminate (no known total, e.g. triage).
+function busyBanner(busy: Busy): { label: string; pct: number | null } | null {
+  const p = (done: number, total: number) => (total > 0 ? Math.round((done / total) * 100) : 0)
+  switch (busy.kind) {
+    case 'load':
+      return { label: busy.label, pct: busy.pct }
+    case 'lookup':
+      return { label: `Looking up existing docs — ${busy.done.toLocaleString()}/${busy.total.toLocaleString()} (${p(busy.done, busy.total)}%)`, pct: p(busy.done, busy.total) }
+    case 'resolve':
+      return { label: `Matching against UAT — ${busy.done.toLocaleString()}/${busy.total.toLocaleString()} (${p(busy.done, busy.total)}%)`, pct: p(busy.done, busy.total) }
+    case 'triage':
+      return { label: 'Diffing rows against UAT…', pct: null }
+    case 'run':
+      return { label: `${busy.op} — ${busy.done.toLocaleString()}/${busy.total.toLocaleString()} (${p(busy.done, busy.total)}%)`, pct: p(busy.done, busy.total) }
+    case 'scan':
+      return { label: `Scanning UAT — ${busy.count.toLocaleString()} records…`, pct: null }
+    default:
+      return null
+  }
+}
+
 // POST JSON with 3 retries + backoff; throws with the server's error message.
 async function postJson(endpoint: string, body: unknown): Promise<Record<string, unknown>> {
   let lastErr = ''
@@ -655,6 +677,22 @@ export default function EntryPage() {
       </div>
 
       {error && <div className="error-box">{error}</div>}
+
+      {(() => {
+        const b = busyBanner(busy)
+        if (!b) return null
+        return (
+          <div className="panel" style={{ padding: 12, marginBottom: 14 }}>
+            <div className="row-flex spread" style={{ marginBottom: 6 }}>
+              <span className="small" style={{ fontWeight: 600 }}>⏳ {b.label}</span>
+              {b.pct != null && <span className="muted small">{b.pct}%</span>}
+            </div>
+            <div className="progress">
+              <div style={{ width: b.pct != null ? `${b.pct}%` : '100%', opacity: b.pct != null ? 1 : 0.5 }} />
+            </div>
+          </div>
+        )
+      })()}
 
       <section className="panel">
         <h2>

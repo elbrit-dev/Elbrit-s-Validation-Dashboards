@@ -2,6 +2,7 @@
 // Google Drive folder browser with multi-select + editable month tag per file.
 import { useEffect, useState } from 'react'
 import { listFiles, guessMonthTag } from '@/lib/client/driveClient'
+import { getCompletions } from '@/lib/client/db'
 import type { DriveFile } from '@/lib/shared/types'
 
 const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
@@ -29,6 +30,14 @@ export default function FileBrowser({
   const [error, setError] = useState('')
   const [files, setFiles] = useState<DriveFile[]>([])
   const [selected, setSelected] = useState<Map<string, Selected>>(new Map())
+  // fileId → { monthTag, ok, failed } for files already run to UAT.
+  const [done, setDone] = useState<Record<string, { monthTag: string; ok: number; failed: number }>>({})
+
+  useEffect(() => {
+    getCompletions()
+      .then((cs) => setDone(Object.fromEntries(cs.map((c) => [c.fileId, { monthTag: c.monthTag, ok: c.docsOk, failed: c.docsFailed }]))))
+      .catch(() => {})
+  }, [])
 
   const refresh = () => {
     setState('loading')
@@ -88,6 +97,11 @@ export default function FileBrowser({
                   </span>
                 )}
               </span>
+              {done[f.id] && (
+                <span className="pill done" title={`Run to UAT for ${done[f.id].monthTag} — ${done[f.id].ok} docs OK${done[f.id].failed ? `, ${done[f.id].failed} with errors` : ''}`}>
+                  ✓ done · {done[f.id].monthTag}
+                </span>
+              )}
               <span className="muted small">{fmtSize(f.size)}</span>
               {sel && (
                 <input

@@ -51,10 +51,23 @@ export interface ErpIndexRec {
   fields: Record<string, string>
 }
 
+// Persistent record of a Drive file that was run to UAT (survives clearing a
+// session), so the file browser can show a "Completed" badge per file+month.
+export interface CompletionRec {
+  key: string // `${fileId}|${monthTag}`
+  fileId: string
+  name: string
+  monthTag: string
+  completedAt: number
+  docsOk: number
+  docsFailed: number
+}
+
 class AppDB extends Dexie {
   sessions!: Table<SessionRec, string>
   rows!: Table<RowRec, number>
   erpIndex!: Table<ErpIndexRec, [string, string]>
+  completions!: Table<CompletionRec, string>
 
   constructor() {
     super('secondary-data-entry')
@@ -62,6 +75,12 @@ class AppDB extends Dexie {
       sessions: 'id, createdAt',
       rows: '++rid, sessionId, [sessionId+key], [sessionId+action], [sessionId+runStatus]',
       erpIndex: '[sessionId+code], sessionId',
+    })
+    this.version(2).stores({
+      sessions: 'id, createdAt',
+      rows: '++rid, sessionId, [sessionId+key], [sessionId+action], [sessionId+runStatus]',
+      erpIndex: '[sessionId+code], sessionId',
+      completions: 'key, fileId, monthTag',
     })
   }
 }
@@ -83,6 +102,22 @@ export async function clearSession(sessionId: string): Promise<void> {
     d.erpIndex.where('sessionId').equals(sessionId).delete(),
     d.sessions.delete(sessionId),
   ])
+}
+
+// Record that a set of files (with their month tag) were run to UAT.
+export async function markFilesCompleted(
+  files: { id: string; name: string; monthTag: string }[],
+  docsOk: number,
+  docsFailed: number,
+): Promise<void> {
+  const now = Date.now()
+  await getDb().completions.bulkPut(
+    files.map((f) => ({ key: `${f.id}|${f.monthTag}`, fileId: f.id, name: f.name, monthTag: f.monthTag, completedAt: now, docsOk, docsFailed })),
+  )
+}
+
+export async function getCompletions(): Promise<CompletionRec[]> {
+  return getDb().completions.toArray()
 }
 
 export async function erpIndexMap(sessionId: string): Promise<Map<string, ErpSummary>> {

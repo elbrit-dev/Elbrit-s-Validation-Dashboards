@@ -11,7 +11,7 @@ import VirtualTable, { type VColumn } from '@/components/VirtualTable'
 import { downloadFile } from '@/lib/client/driveClient'
 import { parseFile, triageAll, exportXlsx } from '@/lib/client/workers'
 import { runInBatches } from '@/lib/client/batchRunner'
-import { getDb, latestSession, clearSession, requestPersistence, type RowRec, type SessionRec } from '@/lib/client/db'
+import { getDb, latestSession, clearSession, requestPersistence, markFilesCompleted, type RowRec, type SessionRec } from '@/lib/client/db'
 import { childRow, distributorOf, dateOf, firstValue, splitKey, KEY_SEP, isSkippedProduct } from '@/lib/shared/mapping'
 import type { ErpSummary, RowResult, TriageAction, MappingResult } from '@/lib/shared/types'
 
@@ -445,6 +445,12 @@ export default function EntryPage() {
       await getDb().sessions.put(rec2)
       setSession(rec2)
       await refreshRows(session.id)
+      // Mark this session's files as completed (per file + month) unless aborted.
+      if (!signal.current.aborted) {
+        const okKeys = new Set(rows.filter((r) => r.runStatus === 'done').map((r) => r.key))
+        const failKeys = new Set(rows.filter((r) => r.runStatus === 'error').map((r) => r.key))
+        await markFilesCompleted(session.files, okKeys.size, failKeys.size)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

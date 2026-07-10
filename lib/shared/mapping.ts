@@ -98,6 +98,13 @@ export function normalizeItem(s: string): string {
     .trim()
 }
 
+// Region-suffixed SKUs like "GLIMIBRIT M2 15'S AP" are NOT in the UAT item
+// master (the " AP" region tag) — they must be left OUT of the write, not
+// flagged as errors. Detect the trailing standalone "AP" tag.
+export function isSkippedProduct(name: string): boolean {
+  return /\sAP\s*$/i.test(stripEllipsis(String(name ?? '')))
+}
+
 // Nomenclature key for matching a sheet Stockist to a UAT Customer name.
 // Case/punctuation-insensitive with single spaces — "MARUTHI AGENCIES" matches
 // the canonical "Maruthi Agencies"; harder cases go through CUSTOMER_ALIASES.

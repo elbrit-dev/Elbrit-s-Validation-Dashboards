@@ -19,7 +19,7 @@ export type SeverityKey = keyof typeof SEVERITY
 // A row plus its UAT-resolution status (set once "Check with UAT" has run).
 export interface RuleContext {
   raw: Record<string, unknown>
-  itemStatus?: 'ok' | 'ambiguous' | 'missing'
+  itemStatus?: 'ok' | 'ambiguous' | 'missing' | 'skip'
   distStatus?: 'ok' | 'ambiguous' | 'missing'
   roleProfile?: string // custom_role_profile filled by the auto-mapping
   mapStatus?: 'ok' | 'conflict' | 'unmapped'
@@ -86,7 +86,8 @@ export const RULES: Rule[] = [
     category: 'Match',
     description: 'Product does not resolve to a UAT Item (Products).',
     fix: 'Fix the product name in the sheet or add an item alias.',
-    test: (c) => c.itemStatus !== undefined && c.itemStatus !== 'ok',
+    // 'skip' (region SKU) is intentional — not a failure.
+    test: (c) => c.itemStatus !== undefined && c.itemStatus !== 'ok' && c.itemStatus !== 'skip',
   },
   {
     id: 'distributor_unresolved',

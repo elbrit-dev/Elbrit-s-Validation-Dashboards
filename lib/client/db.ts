@@ -26,7 +26,7 @@ export interface RowRec {
   changed?: ChangedField[]
   // Item-name resolution against UAT (nomenclature matching).
   resolvedItem?: string // canonical UAT Item name when itemStatus === 'ok'
-  itemStatus?: 'ok' | 'ambiguous' | 'missing'
+  itemStatus?: 'ok' | 'ambiguous' | 'missing' | 'skip' // 'skip' = region SKU, left out of the write
   itemOptions?: string[] // candidate names when ambiguous
   // Stockist → UAT Customer resolution (the distributor link).
   resolvedDistributor?: string // canonical UAT Customer name when distStatus === 'ok'

@@ -12,7 +12,7 @@ import { downloadFile } from '@/lib/client/driveClient'
 import { parseFile, triageAll, exportXlsx } from '@/lib/client/workers'
 import { runInBatches } from '@/lib/client/batchRunner'
 import { getDb, latestSession, clearSession, requestPersistence, type RowRec, type SessionRec } from '@/lib/client/db'
-import { childRow, distributorOf, dateOf, firstValue, splitKey, KEY_SEP } from '@/lib/shared/mapping'
+import { childRow, distributorOf, dateOf, firstValue, splitKey, KEY_SEP, isSkippedProduct } from '@/lib/shared/mapping'
 import type { ErpSummary, RowResult, TriageAction, MappingResult } from '@/lib/shared/types'
 
 const LOOKUP_CHUNK = 90
@@ -250,13 +250,17 @@ export default function EntryPage() {
       setBusy({ kind: 'triage' })
       const results = await triageAll(rows.map((r) => ({ key: r.key, raw: r.raw })), indexEntries)
       const updated = rows.map((r, i) => {
-        const im = itemMatch.get(firstValue(r.raw, ['Product', 'Product Code']))
-        const itemStatus = im?.status ?? 'missing'
+        const prod = firstValue(r.raw, ['Product', 'Product Code'])
+        const im = itemMatch.get(prod)
+        // Region SKUs ("… AP") are intentionally left out — not a conflict.
+        const itemStatus: 'ok' | 'ambiguous' | 'missing' | 'skip' = isSkippedProduct(prod) ? 'skip' : im?.status ?? 'missing'
         const cm = custMatch.get(distributorOf(r.raw))
         const distStatus: 'ok' | 'ambiguous' | 'missing' = r.key ? cm?.status ?? 'missing' : 'missing'
         // A row is a conflict (excluded from writes) if its item OR its
-        // distributor can't be resolved, or it has no key.
-        const bad = results[i].action === 'conflict' || itemStatus !== 'ok' || distStatus !== 'ok'
+        // distributor can't be resolved, or it has no key. A 'skip' item is not
+        // a conflict — it's just dropped from the doc's items.
+        const itemBad = itemStatus !== 'ok' && itemStatus !== 'skip'
+        const bad = results[i].action === 'conflict' || itemBad || distStatus !== 'ok'
         const action: TriageAction = bad ? 'conflict' : results[i].action
         return {
           ...r,
@@ -360,8 +364,10 @@ export default function EntryPage() {
     setPaused(false)
     signal.current = { paused: false, aborted: false }
     try {
-      const createRows = doCreate ? rows.filter((r) => r.action === 'create' && r.runStatus !== 'done') : []
-      const updateRows = doUpdate ? rows.filter((r) => r.action === 'update' && r.runStatus !== 'done') : []
+      // 'skip' rows (region SKUs) are dropped from the write — they never
+      // become child items in the doc.
+      const createRows = doCreate ? rows.filter((r) => r.action === 'create' && r.runStatus !== 'done' && r.itemStatus !== 'skip') : []
+      const updateRows = doUpdate ? rows.filter((r) => r.action === 'update' && r.runStatus !== 'done' && r.itemStatus !== 'skip') : []
       // Test mode: cap how many DOCUMENTS (distributor+date groups) to write.
       const limit = Math.max(0, Math.floor(Number(testLimit) || 0))
       const cap = <T,>(arr: T[]) => (limit > 0 ? arr.slice(0, limit) : arr)
@@ -611,6 +617,8 @@ export default function EntryPage() {
       render: (r) =>
         r.itemStatus === 'ok' ? (
           <span className="mono" style={{ color: 'var(--green)' }}>{r.resolvedItem}</span>
+        ) : r.itemStatus === 'skip' ? (
+          <span className="pill" title="Region SKU (… AP) — left out of the write">skipped</span>
         ) : r.itemStatus === 'ambiguous' ? (
           <span className="pill amber" title={(r.itemOptions || []).join(', ')}>ambiguous</span>
         ) : r.itemStatus === 'missing' ? (

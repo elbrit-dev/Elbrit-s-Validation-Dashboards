@@ -195,10 +195,11 @@ function MatchLine({
 }: {
   sheet: string
   resolved?: string
-  status?: 'ok' | 'ambiguous' | 'missing'
+  status?: 'ok' | 'ambiguous' | 'missing' | 'skip'
   options?: string[]
 }) {
   if (!status) return <span className="muted">— run “Check with UAT” first</span>
+  if (status === 'skip') return <span className="muted"><span className="mono">{sheet}</span> → skipped (region SKU, left out)</span>
   if (status === 'ok')
     return (
       <span>

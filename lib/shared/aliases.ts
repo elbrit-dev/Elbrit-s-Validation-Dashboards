@@ -86,7 +86,16 @@ export const ITEM_ALIASES: Record<string, string> = {
 }
 
 // Sheet Stockist  →  UAT Customer (distributor link). Left side is matched
-// case/punctuation-insensitively; right side is the exact UAT Customer name.
+// case/punctuation-insensitively.
+//
+// The RIGHT side is EITHER:
+//   • an exact UAT Customer name  (e.g. 'Divya Pharma Distributors Pvt Ltd'), OR
+//   • an EBS code  (e.g. 'EBS708')  — use this when several UAT customers share
+//     the SAME name and only the EBS code (whg_ebs_code) tells them apart. The
+//     Ecubix sheet always sends the bare name (e.g. "OPTIVAL HEALTH SOLUTIONS
+//     PRIVATE LIMITED"), which would otherwise silently match the wrong record;
+//     pinning to the EBS code resolves it to the exact customer + sales team.
+//     EBS310=Chennai etc. — look up the code on the Customer in ERP.
 export const CUSTOMER_ALIASES: Record<string, string> = {
   'DIVYA PHARMA DIST': 'Divya Pharma Distributors Pvt Ltd',
   'VENKATASAI AGENCIES DRUGS PVT LTD UPPAL': 'Venkatasai Agencies Drugs Pvt Ltd',
@@ -111,6 +120,10 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'DR.SUNDARARAJAN NEURO HOSPITAL PVT LTD': 'Dr Sundarajan Neuro Hospital Pvt Ltd',
   'SRI LAKSHMI MEDICAL CENTRE & HOSPITAL': 'Sri Lakshmi Medical Centre  &  Hospital Pharmacy',
   'OPTIVAL HEALTH SOLUTIONS PVT LTD': 'Optival Health Solutions Private Limited',
+  // Ecubix sends the bare name for all 3 Optival records; pin to the exact one by
+  // EBS code (EBS709 = KA/HQ-Bangalore). Flip to EBS708 (AP/Vijayawada) or EBS710
+  // (Chennai) if this sheet's Optival is a different branch.
+  'OPTIVAL HEALTH SOLUTIONS PRIVATE LIMITED': 'EBS709',
   'PALEPU PHARMA DIST PVT LTD MYLAPORE': 'Palepu Pharma Distributors Pvt Ltd Mylapore',
   'SURESH PHARMA AGENCIES CH PVT LTD': 'Suresh Pharma Agencies (Chennai) Private Limited',
   'PURANI HOSPITAL SUPPLIES LTD': 'Purani Hospital Supplies Private Ltd Erd',

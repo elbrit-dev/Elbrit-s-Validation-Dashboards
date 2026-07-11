@@ -117,9 +117,21 @@ export function normalizeCustomer(s: string): string {
 }
 
 // First non-empty value among a spec's candidate headers (ellipsis stripped).
+// Exact header match wins; if none hit, fall back to a case/whitespace-insensitive
+// match so a sheet exported with "DATE" or "Date " still resolves — the same
+// tolerance detectCodeColumn already applies to the distributor column. (Without
+// this the date silently came back empty, which emptied the row key and turned
+// every row into a conflict.)
 export function firstValue(raw: Record<string, unknown>, headers: string[]): string {
   for (const h of headers) {
     const v = raw[h]
+    if (v != null && String(v).trim() !== '') return stripEllipsis(String(v))
+  }
+  const norm = (s: string) => s.trim().toLowerCase()
+  const wanted = new Set(headers.map(norm))
+  for (const k of Object.keys(raw)) {
+    if (!wanted.has(norm(k))) continue
+    const v = raw[k]
     if (v != null && String(v).trim() !== '') return stripEllipsis(String(v))
   }
   return ''

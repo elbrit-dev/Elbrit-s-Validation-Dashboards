@@ -140,10 +140,18 @@ export function firstValue(raw: Record<string, unknown>, headers: string[]): str
 export const distributorOf = (raw: Record<string, unknown>): string => firstValue(raw, PARENT_FIELDS[0].sheet)
 export const dateOf = (raw: Record<string, unknown>): string => normDate(firstValue(raw, PARENT_FIELDS[1].sheet))
 
-// Normalise a sheet date to YYYY-MM-DD (drop any trailing time component).
+// Normalise a sheet date to YYYY-MM-DD (ERPNext's required format), dropping any
+// trailing time component. Handles both ISO (2026-07-11, 2026/07/11) and the
+// Indian day-first exports (11-07-2026, 11/07/2026 → 2026-07-11). Ecubix files
+// vary in format between exports, and a non-ISO date makes ERPNext reject the
+// write (HTTP 500). Unrecognised strings pass through unchanged.
 function normDate(v: string): string {
-  const m = v.trim().match(/^(\d{4})-(\d{2})-(\d{2})/)
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : v.trim()
+  const s = v.trim()
+  const iso = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/)
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`
+  const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/)
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`
+  return s
 }
 
 // The parent identity: distributor + date. Empty when either part is missing.

@@ -55,14 +55,41 @@ export async function send(method: 'POST' | 'PUT' | 'DELETE', path: string, body
     try { data = ((await r.json()) as { data?: Record<string, unknown> }).data } catch { /* DELETE returns no body */ }
     return { ok: true, status: r.status, data }
   }
+  // Surface whatever ERPNext actually said. Read the body once as text, then try
+  // JSON (frappe puts the real error in exception / _server_messages / exc). If
+  // none of those are present, fall back to the raw body so a 500 is never a bare
+  // "HTTP 500" with no clue.
+  const raw = await r.text().catch(() => '')
   let detail = ''
   try {
-    const j = await r.json()
-    detail = (j.exception || j._server_messages || j.message || '') as string
+    const j = JSON.parse(raw)
+    const msgs = j._server_messages ? tryParseServerMessages(j._server_messages) : ''
+    detail = (j.exception || msgs || j.exc || j.message || j._error_message || '') as string
   } catch {
-    detail = r.statusText
+    /* body isn't JSON */
   }
+  if (!detail) detail = raw || r.statusText
   return { ok: false, status: r.status, error: cleanErr(detail) }
+}
+
+// frappe's _server_messages is a JSON string of JSON strings; pull out the
+// human "message" from each. Best-effort — returns '' if the shape is unexpected.
+function tryParseServerMessages(s: string): string {
+  try {
+    const arr = JSON.parse(s) as string[]
+    return arr
+      .map((m) => {
+        try {
+          const o = JSON.parse(m) as { message?: string }
+          return o.message || m
+        } catch {
+          return m
+        }
+      })
+      .join(' | ')
+  } catch {
+    return ''
+  }
 }
 
 // List documents (frappe list API). Filters use the standard triple format.

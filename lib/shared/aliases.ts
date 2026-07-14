@@ -113,7 +113,9 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'M M PHARMA DISTRIBUTOR': 'M M Pharma Distributor',
   'M.M. PHARMA DISTRIBUTOR': 'M.M. Pharma Distributor',
   'PURANI HOSPITAL SUPPLIES PRIVATE LTD': 'EBS143', // pin to Purani … Cbe by EBS code
-  'R.S.DRUGS AND MEDICALS PVT LTD': 'R.S. Drugs and Medicals Private Limited',
+  // Two look-alike branches: Guindy (EBS677) vs plain (EBS385). Per-row Stockist
+  // Code pins each; this shared-name fallback resolves to the plain branch by code.
+  'R.S.DRUGS AND MEDICALS PVT LTD': 'EBS385',
   'YOGIRAM HEALTHCARE': 'Yogiram Distributors Private Limited Anx',
   'PALEPU PHARMA PVT LTD TAMBARAM': 'Palepu Pharma Dist Pvt Ltd Tambaram',
   'SRI ANDAVAR': 'Sri Andavar Trichy Pharmaceuticals',
@@ -140,4 +142,5 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'KHANDELWAL MEDICOSE': 'M/S Khandelwal Medicos',
   'VRINDAVAN PHARMA': 'M/S Vrindavan Pharma',
   'M KUMARS DISTRIBUTORS': "M Kumar'S Distributors",
+  'PALEPU PHARMA DISTRIBUTORS PVT LTD MUPR':'Palepu Pharma Distributors Pvt Ltd Mupr'
 }

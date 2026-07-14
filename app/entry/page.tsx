@@ -12,7 +12,7 @@ import { downloadFile } from '@/lib/client/driveClient'
 import { parseFile, triageAll, exportXlsx } from '@/lib/client/workers'
 import { runInBatches } from '@/lib/client/batchRunner'
 import { getDb, latestSession, clearSession, requestPersistence, markFilesCompleted, type RowRec, type SessionRec } from '@/lib/client/db'
-import { childRow, distributorOf, dateOf, firstValue, splitKey, KEY_SEP, isSkippedProduct } from '@/lib/shared/mapping'
+import { childRow, distributorOf, distributorCodeOf, distributorKeyOf, dateOf, firstValue, splitKey, KEY_SEP, isSkippedProduct } from '@/lib/shared/mapping'
 import type { ErpSummary, RowResult, TriageAction, MappingResult } from '@/lib/shared/types'
 
 const LOOKUP_CHUNK = 90
@@ -226,12 +226,20 @@ export default function EntryPage() {
       await db.erpIndex.where('sessionId').equals(session.id).delete()
       const RESOLVE_CHUNK = 200
 
-      // 1) resolve Stockist → UAT Customer (the distributor link)
-      const stockists = [...new Set(rows.map((r) => distributorOf(r.raw)).filter(Boolean))]
+      // 1) resolve Stockist → UAT Customer (the distributor link). The identity
+      //    is the EBS Stockist Code when the sheet carries one (pins look-alike
+      //    branches to the exact customer), else the loose Stockist name. Send
+      //    name + code so the server can resolve by whg_ebs_code first.
+      const stockistById = new Map<string, { id: string; name: string; code: string }>()
+      for (const r of rows) {
+        const id = distributorKeyOf(r.raw)
+        if (id && !stockistById.has(id)) stockistById.set(id, { id, name: distributorOf(r.raw), code: distributorCodeOf(r.raw) })
+      }
+      const stockists = [...stockistById.values()]
       const custMatch = new Map<string, CustomerMatch>()
       for (let i = 0; i < stockists.length; i += RESOLVE_CHUNK) {
         const slice = stockists.slice(i, i + RESOLVE_CHUNK)
-        const body = await postJson('/api/erp/resolve-customers', { names: slice })
+        const body = await postJson('/api/erp/resolve-customers', { items: slice })
         for (const [k, v] of Object.entries((body.resolved || {}) as Record<string, CustomerMatch>)) custMatch.set(k, v)
         setBusy({ kind: 'resolve', done: Math.min(i + RESOLVE_CHUNK, stockists.length), total: stockists.length })
       }
@@ -276,7 +284,7 @@ export default function EntryPage() {
         const im = itemMatch.get(prod)
         // Region SKUs ("… AP") are intentionally left out — not a conflict.
         const itemStatus: 'ok' | 'ambiguous' | 'missing' | 'skip' = isSkippedProduct(prod) ? 'skip' : im?.status ?? 'missing'
-        const cm = custMatch.get(distributorOf(r.raw))
+        const cm = custMatch.get(distributorKeyOf(r.raw))
         const distStatus: 'ok' | 'ambiguous' | 'missing' = r.key ? cm?.status ?? 'missing' : 'missing'
         // A row is a conflict (excluded from writes) if its item OR its
         // distributor can't be resolved, or it has no key. A 'skip' item is not

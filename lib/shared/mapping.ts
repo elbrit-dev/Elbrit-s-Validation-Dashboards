@@ -140,6 +140,18 @@ export function firstValue(raw: Record<string, unknown>, headers: string[]): str
 export const distributorOf = (raw: Record<string, unknown>): string => firstValue(raw, PARENT_FIELDS[0].sheet)
 export const dateOf = (raw: Record<string, unknown>): string => normDate(firstValue(raw, PARENT_FIELDS[1].sheet))
 
+// The "Stockist Code" column carries the unique EBS code (e.g. EBS677) that pins
+// a look-alike stockist to the exact ERP branch — "R.S. Drugs … Guindy" (EBS677)
+// vs plain "R.S. Drugs …" (EBS385) share a name but not a code. Empty on older
+// sheets that don't have the column.
+export const distributorCodeOf = (raw: Record<string, unknown>): string => firstValue(raw, ['Stockist Code'])
+
+// The identity used both to GROUP rows into one parent doc and to resolve the
+// distributor to a UAT Customer. Prefer the unique EBS code so same-named
+// branches stay distinct; fall back to the loose Stockist name when no code is
+// present (unchanged behaviour for older sheets).
+export const distributorKeyOf = (raw: Record<string, unknown>): string => distributorCodeOf(raw) || distributorOf(raw)
+
 // Normalise a sheet date to YYYY-MM-DD (ERPNext's required format), dropping any
 // trailing time component. Handles both ISO (2026-07-11, 2026/07/11) and the
 // Indian day-first exports (11-07-2026, 11/07/2026 → 2026-07-11). Ecubix files
@@ -156,7 +168,7 @@ function normDate(v: string): string {
 
 // The parent identity: distributor + date. Empty when either part is missing.
 export function parentKey(raw: Record<string, unknown>): string {
-  const d = distributorOf(raw)
+  const d = distributorKeyOf(raw)
   const dt = dateOf(raw)
   return d && dt ? `${d}${KEY_SEP}${dt}` : ''
 }

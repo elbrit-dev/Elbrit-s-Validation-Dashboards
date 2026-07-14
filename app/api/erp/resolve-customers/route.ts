@@ -69,19 +69,33 @@ async function getIndex(): Promise<CustIndex> {
   return cache
 }
 
-function match(idx: CustIndex, raw: string): CustomerMatch {
-  // A manual alias points at the EXACT UAT customer — trust it (skip the
+function byEbs(idx: CustIndex, ebs: string): CustomerMatch | null {
+  const hit = idx.byEbs.get(ebs.trim().toUpperCase())
+  if (hit && hit.length === 1) return { status: 'ok', name: hit[0] }
+  if (hit && hit.length > 1) return { status: 'ambiguous', name: '', options: hit }
+  return null
+}
+
+function match(idx: CustIndex, raw: string, code?: string): CustomerMatch {
+  // 1) The sheet's own "Stockist Code" (EBS code) is the strongest signal: it
+  // pins a look-alike stockist to the exact ERP branch by the unique
+  // whg_ebs_code (EBS677 → "… Guindy", EBS385 → plain). When the code is present
+  // and matches, trust it over the (ambiguous) name. If the code is present but
+  // unknown to UAT, fall through to name resolution rather than hard-failing.
+  if (code && EBS_RE.test(code.trim())) {
+    const hit = byEbs(idx, code)
+    if (hit) return hit
+  }
+
+  // 2) A manual alias points at the EXACT UAT customer — trust it (skip the
   // ambiguity check). The target is either an EBS code ("EBS708" → resolve by the
   // unique whg_ebs_code, to pin one of several same-named customers) or an exact
   // customer name. Either way it must exist in UAT.
   const aliasTarget = ALIAS_BY_KEY.get(aliasCustKey(raw))
   if (aliasTarget) {
-    if (EBS_RE.test(aliasTarget)) {
-      const hit = idx.byEbs.get(aliasTarget.toUpperCase())
-      if (hit && hit.length === 1) return { status: 'ok', name: hit[0] }
-      if (hit && hit.length > 1) return { status: 'ambiguous', name: '', options: hit }
-      return { status: 'missing', name: '' }
-    }
+    // An alias that explicitly names an EBS code MUST resolve to it — a miss is
+    // a real config error, so don't fall back to the name here.
+    if (EBS_RE.test(aliasTarget)) return byEbs(idx, aliasTarget) ?? { status: 'missing', name: '' }
     return idx.names.has(aliasTarget) ? { status: 'ok', name: aliasTarget } : { status: 'missing', name: '' }
   }
 
@@ -100,13 +114,24 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: (e as Error).message }, { status: 503 })
   }
   const body = await req.json().catch(() => ({}))
-  const names: string[] = Array.isArray(body?.names) ? body.names.filter((n: unknown) => typeof n === 'string' && n.trim() !== '') : []
-  if (names.length === 0) return NextResponse.json({ resolved: {} })
+  // Two shapes accepted. New: { items: [{ id, name, code }] } where `id` is the
+  // caller's identity for the row (EBS code when present, else the name) and
+  // `code` is the sheet Stockist Code used to pin the exact branch. Legacy:
+  // { names: string[] } — resolved by name only, keyed by name.
+  interface InItem { id: string; name: string; code?: string }
+  const items: InItem[] = Array.isArray(body?.items)
+    ? body.items
+        .filter((it: unknown): it is InItem => !!it && typeof (it as InItem).name === 'string' && (it as InItem).name.trim() !== '')
+        .map((it: InItem) => ({ id: String(it.id ?? it.name), name: it.name, code: typeof it.code === 'string' ? it.code : '' }))
+    : Array.isArray(body?.names)
+      ? body.names.filter((n: unknown) => typeof n === 'string' && n.trim() !== '').map((n: string) => ({ id: n, name: n, code: '' }))
+      : []
+  if (items.length === 0) return NextResponse.json({ resolved: {} })
 
   try {
     const idx = await getIndex()
     const resolved: Record<string, CustomerMatch> = {}
-    for (const n of names) if (!(n in resolved)) resolved[n] = match(idx, n)
+    for (const it of items) if (!(it.id in resolved)) resolved[it.id] = match(idx, it.name, it.code)
     return NextResponse.json({ resolved, customerCount: idx.byNorm.size })
   } catch (err) {
     return NextResponse.json({ error: 'Customer resolve failed', detail: err instanceof Error ? err.message : String(err) }, { status: 502 })

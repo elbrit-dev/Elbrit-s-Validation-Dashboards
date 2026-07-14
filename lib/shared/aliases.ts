@@ -106,7 +106,8 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'NEW JAISWAL MEDICOS': 'New Jaiswal Medicose',
   'D.P Medicose': 'D.P Medicos',
   'LUCKY PHARMA LOGISTICS PVT LTD': 'Lucky Pharma Logistics Private Limited',
-  'PALEPU PHARMA PVT. LTD. , MADURAI': 'Palepu Pharma Distributors Pvt Ltd Madur',
+  // Palepu Madurai is now pinned by its EBS Stockist Code (EBS107, the customer's
+  // secondary "EBS Code" field) via the EBS logic — no name alias needed.
   'SRI SAROJINI ENTERPRISES': 'Sarojini Enterprises',
   'A M PHARMA': 'AM PHARMA',
   'M M PHARMA DISTRIBUTOR': 'M M Pharma Distributor',

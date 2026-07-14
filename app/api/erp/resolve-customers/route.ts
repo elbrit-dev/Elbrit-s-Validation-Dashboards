@@ -18,7 +18,7 @@ export interface CustomerMatch {
 interface CustIndex {
   byNorm: Map<string, string[]>
   names: Set<string> // exact customer names (for alias targets)
-  byEbs: Map<string, string[]> // UPPERCASE EBS code (whg_ebs_code) → customer name(s)
+  byEbs: Map<string, string[]> // UPPERCASE EBS code (from any EBS field) → customer name(s)
   loadedAt: number
 }
 
@@ -38,22 +38,39 @@ const TTL_MS = 10 * 60 * 1000
 const PAGE = 500
 const HARD_CAP = 100000
 
+// A Customer can carry its EBS code in more than one field: the primary
+// whg_ebs_code ("EBS Code *") AND a secondary free-text "EBS Code" field holding
+// an alternate/legacy code — e.g. Saraswathi Agencies = EBS069 (primary) +
+// EBS643 (secondary), and the sheet's Stockist Code may be EITHER. We don't know
+// the secondary field's exact name, so fetch all fields and pull EBS codes from
+// any field that is EBS-named or whose whole value is just EBS code(s) (the
+// secondary field is multiline and may list several). This stays entirely in the
+// EBS-code lane — name/nomenclature matching is unaffected.
+const EBS_TOKEN = /EBS\d+/gi
+const PURE_EBS = /^(?:EBS\d+[\s,;]*)+$/i
+const ebsCodesIn = (v: unknown): string[] => String(v ?? '').toUpperCase().match(EBS_TOKEN) ?? []
+
 async function getIndex(): Promise<CustIndex> {
   if (cache && Date.now() - cache.loadedAt < TTL_MS) return cache
   const byNorm = new Map<string, string[]>()
   const names = new Set<string>()
   const byEbs = new Map<string, string[]>()
+  const addEbs = (code: string, nm: string) => {
+    const e = byEbs.get(code)
+    if (e) { if (!e.includes(nm)) e.push(nm) } // dedupe: same code in two fields of one customer ≠ ambiguous
+    else byEbs.set(code, [nm])
+  }
   let offset = 0
   for (;;) {
-    const docs = await listDocs('Customer', [], ['name', 'whg_ebs_code'], { limit: PAGE, offset })
+    const docs = await listDocs('Customer', [], ['*'], { limit: PAGE, offset })
     for (const d of docs) {
       const nm = String(d.name)
       names.add(nm)
-      const ebs = String(d.whg_ebs_code ?? '').trim().toUpperCase()
-      if (ebs) {
-        const e = byEbs.get(ebs)
-        if (e) e.push(nm)
-        else byEbs.set(ebs, [nm])
+      for (const [k, v] of Object.entries(d)) {
+        // Accept a field named like an EBS field, or one whose entire value is
+        // EBS code(s) — avoids scraping "EBS123" out of an address/notes field.
+        if (!/ebs/i.test(k) && !PURE_EBS.test(String(v ?? '').trim())) continue
+        for (const code of ebsCodesIn(v)) addEbs(code, nm)
       }
       const norm = normalizeCustomer(nm)
       if (!norm) continue

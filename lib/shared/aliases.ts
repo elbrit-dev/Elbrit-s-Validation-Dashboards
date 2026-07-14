@@ -112,7 +112,7 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'A M PHARMA': 'AM PHARMA',
   'M M PHARMA DISTRIBUTOR': 'M M Pharma Distributor',
   'M.M. PHARMA DISTRIBUTOR': 'M.M. Pharma Distributor',
-  'PURANI HOSPITAL SUPPLIES PRIVATE LTD': 'Purani Hospital Supplies Private  Ltd Cbe',
+  'PURANI HOSPITAL SUPPLIES PRIVATE LTD': 'EBS143', // pin to Purani … Cbe by EBS code
   'R.S.DRUGS AND MEDICALS PVT LTD': 'R.S. Drugs and Medicals Private Limited',
   'YOGIRAM HEALTHCARE': 'Yogiram Distributors Private Limited Anx',
   'PALEPU PHARMA PVT LTD TAMBARAM': 'Palepu Pharma Dist Pvt Ltd Tambaram',
@@ -127,7 +127,7 @@ export const CUSTOMER_ALIASES: Record<string, string> = {
   'OPTIVAL HEALTH SOLUTIONS PRIVATE LIMITED': 'EBS709',
   'PALEPU PHARMA DIST PVT LTD MYLAPORE': 'Palepu Pharma Distributors Pvt Ltd Mylapore',
   'SURESH PHARMA AGENCIES CH PVT LTD': 'Suresh Pharma Agencies (Chennai) Private Limited',
-  'PURANI HOSPITAL SUPPLIES LTD': 'Purani Hospital Supplies Private Ltd Erd',
+  'PURANI HOSPITAL SUPPLIES LTD': 'EBS207', // pin to Purani … Erd by EBS code
   'SENTHILMURUGAN MEDICAL': 'Senthilmurugan Medical Agences',
   'SENTHILMURUGAN MEDICAL AGENCIES': 'Senthilmurugan Medical Agences',
   'PALEPU PHARMA PVT.LTD.': 'Palepu Pharma Private Ltd - Chennai',

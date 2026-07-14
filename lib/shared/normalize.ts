@@ -30,6 +30,18 @@ export const code = (v: unknown): string => String(v ?? '').trim().replace(/^0+/
 
 export const isBlank = (s: string): boolean => s === '' || s == null
 
+// Parse a possibly-formatted number. Ecubix exports carry Indian thousands
+// separators ("2,143", "83,684.15") and sometimes a currency symbol ("₹71.00").
+// Bare parseFloat stops at the first comma — parseFloat("2,143") === 2 — so the
+// magnitude was silently dropped (2143 written as 2, and every value-based check
+// evaluated against the wrong number). Strip any grouping/currency chars first,
+// keeping only digits, a single decimal point and a leading sign.
+export function parseNum(v: unknown): number {
+  const cleaned = String(v ?? '').replace(/[^0-9.\-]/g, '')
+  const n = parseFloat(cleaned)
+  return Number.isFinite(n) ? n : 0
+}
+
 // Lat/long: ~1e-3 ≈ 100 m — precision/rounding differences are not a change.
 export const NUM_TOL = 1e-3
 
@@ -42,8 +54,8 @@ export function normalizeBy(kind: NormKind, v: unknown): string {
     case 'pincode': return pincode(v)
     case 'code': return code(v)
     case 'num': {
-      const n = parseFloat(String(v ?? ''))
-      return !Number.isFinite(n) || n === 0 ? '' : String(n)
+      const n = parseNum(v)
+      return n === 0 ? '' : String(n)
     }
     default: return text(v)
   }
@@ -53,10 +65,10 @@ export function normalizeBy(kind: NormKind, v: unknown): string {
 // the normalized strings.
 export function sameValue(kind: NormKind, a: unknown, b: unknown): boolean {
   if (kind === 'num') {
-    const x = parseFloat(String(a ?? ''))
-    const y = parseFloat(String(b ?? ''))
-    const xB = !Number.isFinite(x) || x === 0
-    const yB = !Number.isFinite(y) || y === 0
+    const x = parseNum(a)
+    const y = parseNum(b)
+    const xB = x === 0
+    const yB = y === 0
     if (xB && yB) return true
     if (xB || yB) return false
     return Math.abs(x - y) <= NUM_TOL

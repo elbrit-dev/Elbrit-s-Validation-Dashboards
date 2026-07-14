@@ -27,7 +27,7 @@
 // mismatches surface as per-row write errors for you to reconcile.
 // ============================================================================
 
-import type { NormKind } from './normalize'
+import { parseNum, type NormKind } from './normalize'
 
 export const DOCTYPE = 'Secondary Data Entry'
 export const CHILD_TABLE = 'items' // parent Table fieldname holding child rows
@@ -166,10 +166,7 @@ export function splitKey(key: string): { distributor: string; date: string } {
   return i < 0 ? { distributor: key, date: '' } : { distributor: key.slice(0, i), date: key.slice(i + KEY_SEP.length) }
 }
 
-const numOr0 = (v: string): number => {
-  const n = parseFloat(v)
-  return Number.isFinite(n) ? n : 0
-}
+const numOr0 = (v: string): number => parseNum(v)
 
 // Build one child-table row from a sheet row.
 export function childRow(raw: Record<string, unknown>): Record<string, unknown> {

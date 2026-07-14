@@ -6,7 +6,7 @@
 // must be present, and the secondary qty / value must be real numbers.
 
 import { firstValue, CHILD_FIELDS, PARENT_FIELDS } from '../shared/mapping'
-import { text } from '../shared/normalize'
+import { text, parseNum } from '../shared/normalize'
 
 export const SEVERITY = {
   error: { key: 'error', label: 'Error', weight: 25, rank: 3 },
@@ -43,10 +43,7 @@ const headersFor = (key: string): string[] => {
 const val = (raw: Record<string, unknown>, key: string): string => firstValue(raw, headersFor(key))
 const has = (raw: Record<string, unknown>, key: string) => text(val(raw, key)) !== ''
 // Numeric value of a mapped field (0 when blank / non-numeric).
-export const numOf = (raw: Record<string, unknown>, key: string): number => {
-  const n = parseFloat(val(raw, key))
-  return Number.isFinite(n) ? n : 0
-}
+export const numOf = (raw: Record<string, unknown>, key: string): number => parseNum(val(raw, key))
 // A row with NO quantities at all — every stock/sales figure is blank or 0.
 const NUMERIC_KEYS = ['opening_qty', 'sales_qty', 'sales_value', 'closing_qty', 'closing_balance']
 const allZero = (raw: Record<string, unknown>) => NUMERIC_KEYS.every((k) => numOf(raw, k) === 0)

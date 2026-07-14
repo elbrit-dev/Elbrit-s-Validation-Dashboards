@@ -17,7 +17,8 @@ export interface SessionRec {
 export interface RowRec {
   rid?: number
   sessionId: string
-  key: string
+  key: string // sheet-row identity (Stockist Code/name + date)
+  docKey?: string // parent-doc identity = RESOLVED Customer + date; the write/group unit. Several `key`s (e.g. a customer's primary + secondary EBS code) can share one docKey.
   monthTag: string
   fileName: string
   raw: Record<string, string>

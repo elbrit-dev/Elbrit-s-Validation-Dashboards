@@ -119,9 +119,14 @@ export async function getDoc(doctype: string, name: string): Promise<Record<stri
 export const createDoc = (doctype: string, doc: Record<string, unknown>) =>
   send('POST', `/api/resource/${encodeURIComponent(doctype)}`, doc)
 
-// Append/merge child rows into an existing doc's table, keyed by `keyField`
-// (default 'item'): existing rows are kept (preserving their child docname),
-// a matching incoming row overlays its values, new rows are appended.
+// Merge the sheet's child rows into an existing doc's table, keyed by `keyField`
+// (default 'item'). Existing rows for items THIS sheet isn't touching (other
+// divisions' lines) are preserved; existing rows for items we ARE writing are
+// dropped and replaced by ALL the incoming rows as-is. Appending the incoming
+// set wholesale (rather than overlaying one row per item) preserves legitimate
+// duplicates — e.g. "CALBRIT 60K" and "CALBRIT 60K (8 PACKS)" resolve to the
+// same UAT item but are two distinct sheet lines that must BOTH appear in ERP.
+// Re-running the same sheet is idempotent: its items are dropped, then re-added.
 export async function mergeChildAppend(
   doctype: string,
   docName: string,
@@ -131,18 +136,12 @@ export async function mergeChildAppend(
 ): Promise<SendResult> {
   const existing = await getDoc(doctype, docName)
   const existingRows = Array.isArray(existing?.[childField]) ? (existing![childField] as Record<string, unknown>[]) : []
-  const byKey = new Map<string, Record<string, unknown>>()
-  for (const it of existingRows) {
+  const incomingKeys = new Set(incoming.map((it) => String(it[keyField] ?? '').trim()).filter(Boolean))
+  const kept = existingRows.filter((it) => {
     const k = String(it[keyField] ?? '').trim()
-    if (k) byKey.set(k, it)
-  }
-  for (const it of incoming) {
-    const k = String(it[keyField] ?? '').trim()
-    if (!k) continue
-    const prev = byKey.get(k)
-    byKey.set(k, prev ? { ...prev, ...it } : it)
-  }
-  return updateDoc(doctype, docName, { [childField]: [...byKey.values()] })
+    return k !== '' && !incomingKeys.has(k)
+  })
+  return updateDoc(doctype, docName, { [childField]: [...kept, ...incoming] })
 }
 
 export const updateDoc = (doctype: string, docName: string, patch: Record<string, unknown>) =>

@@ -86,13 +86,16 @@ interface WriteGroup {
 }
 
 // Collapse rows into parent groups, preserving the ERP name carried by triage.
+// Grouping is by the RESOLVED doc identity (docKey = customer + date), so rows
+// that reached one customer via different Stockist Codes merge into one doc.
 function groupRows(rs: RowRec[]): WriteGroup[] {
   const m = new Map<string, WriteGroup>()
   for (const r of rs) {
-    let g = m.get(r.key)
+    const gk = r.docKey || r.key
+    let g = m.get(gk)
     if (!g) {
-      g = { key: r.key, erpName: r.erpName, rows: [] }
-      m.set(r.key, g)
+      g = { key: gk, erpName: r.erpName, rows: [] }
+      m.set(gk, g)
     }
     g.rows.push(r)
   }
@@ -117,6 +120,10 @@ function rowProblem(r: RowRec): string {
 // Build a parent's child `items`, using the canonical UAT Item name resolved at
 // check time (falls back to the raw product name — but such rows are conflicts
 // and never reach a write group).
+// ONE child line per sheet row — duplicates are preserved, NOT merged. If a
+// product appears more than once in the sheet (e.g. "CALBRIT 60K" and "CALBRIT
+// 60K (8 PACKS)", which resolve to the same UAT item), the ERP doc must show it
+// the same number of times the sheet does.
 function groupItems(rs: RowRec[]): Record<string, unknown>[] {
   return rs.map((r) => {
     const line: Record<string, unknown> = { ...childRow(r.raw), item: r.resolvedItem || firstValue(r.raw, ['Product', 'Product Code']) }
@@ -254,31 +261,36 @@ export default function EntryPage() {
         setBusy({ kind: 'resolve', done: Math.min(i + RESOLVE_CHUNK, products.length), total: products.length })
       }
 
-      // 3) look up existing docs by the RESOLVED customer + date (so an existing
-      //    doc is detected even though the sheet spells the distributor loosely).
-      const rawKeys = [...new Set(rows.map((r) => r.key).filter(Boolean))]
-      const resToRaw = new Map<string, string>() // resolved lookup key → sheet key
-      for (const rk of rawKeys) {
-        const { distributor, date } = splitKey(rk)
-        const cust = custMatch.get(distributor)
-        resToRaw.set(`${cust?.name || distributor}${KEY_SEP}${date}`, rk)
+      // 3) look up existing docs by the RESOLVED customer + date. That pair — not
+      //    the sheet's Stockist Code — is the true parent-doc identity: ERPNext
+      //    holds ONE Secondary Data Entry per (customer, date), so several codes
+      //    that resolve to the same customer (e.g. a customer's primary + secondary
+      //    EBS code) must share ONE doc, while look-alike branches resolve to
+      //    different customers and stay separate. Unresolved rows fall back to
+      //    their sheet identity (they're conflicts and never written).
+      const docKeyOf = (raw: Record<string, string>): string => {
+        const id = distributorKeyOf(raw)
+        const dist = custMatch.get(id)?.name || id
+        const date = dateOf(raw)
+        return dist && date ? `${dist}${KEY_SEP}${date}` : ''
       }
-      const lookupKeys = [...resToRaw.keys()]
+      const lookupKeys = [...new Set(rows.map((r) => docKeyOf(r.raw)).filter(Boolean))]
       const indexEntries: [string, ErpSummary][] = []
       for (let i = 0; i < lookupKeys.length; i += LOOKUP_CHUNK) {
         const slice = lookupKeys.slice(i, i + LOOKUP_CHUNK)
         const body = await postJson('/api/erp/lookup', { codes: slice })
         for (const rec of Object.values((body.records || {}) as Record<string, ErpSummary>)) {
-          const rawKey = resToRaw.get(rec.code) || rec.code
-          indexEntries.push([rawKey, { name: rec.name, code: rawKey, fields: rec.fields }])
-          await db.erpIndex.bulkPut([{ sessionId: session.id, code: rawKey, name: rec.name, fields: rec.fields }])
+          indexEntries.push([rec.code, { name: rec.name, code: rec.code, fields: rec.fields }])
+          await db.erpIndex.bulkPut([{ sessionId: session.id, code: rec.code, name: rec.name, fields: rec.fields }])
         }
         setBusy({ kind: 'lookup', done: Math.min(i + LOOKUP_CHUNK, lookupKeys.length), total: lookupKeys.length })
       }
 
-      // 4) triage + annotate item and distributor resolution
+      // 4) triage + annotate item and distributor resolution. Triage keys on the
+      //    resolved doc identity so two Stockist Codes for one customer see the
+      //    same existing doc (both update it) instead of each trying to create it.
       setBusy({ kind: 'triage' })
-      const results = await triageAll(rows.map((r) => ({ key: r.key, raw: r.raw })), indexEntries)
+      const results = await triageAll(rows.map((r) => ({ key: docKeyOf(r.raw), raw: r.raw })), indexEntries)
       const updated = rows.map((r, i) => {
         const prod = firstValue(r.raw, ['Product', 'Product Code'])
         const im = itemMatch.get(prod)
@@ -295,6 +307,7 @@ export default function EntryPage() {
         return {
           ...r,
           action,
+          docKey: docKeyOf(r.raw),
           erpName: results[i].erpName,
           changed: results[i].changed,
           resolvedItem: im?.name || '',

@@ -97,6 +97,10 @@ export const ITEM_ALIASES: Record<string, string> = {
 //     pinning to the EBS code resolves it to the exact customer + sales team.
 //     EBS310=Chennai etc. — look up the code on the Customer in ERP.
 export const CUSTOMER_ALIASES: Record<string, string> = {
+  // EBS124 is (wrongly) present on both G.M.Medicals and Ganapati Distributors in
+  // ERP, so the code alone resolves ambiguously — pin the sheet name to the right
+  // customer, which overrides the ambiguous code.
+  'G.M.MEDICALS': 'G.M.Medicals',
   'DIVYA PHARMA DIST': 'Divya Pharma Distributors Pvt Ltd',
   'VENKATASAI AGENCIES DRUGS PVT LTD UPPAL': 'Venkatasai Agencies Drugs Pvt Ltd',
   'SRI VENKATESHWARA GALAXY MEDICAL DISTRIBUTORS PRIVATE': 'Sri Venkateswara Galaxy Medical Distributors Private Limited',

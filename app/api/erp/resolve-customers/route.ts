@@ -96,18 +96,22 @@ function byEbs(idx: CustIndex, ebs: string): CustomerMatch | null {
 function match(idx: CustIndex, raw: string, code?: string): CustomerMatch {
   // 1) The sheet's own "Stockist Code" (EBS code) is the strongest signal: it
   // pins a look-alike stockist to the exact ERP branch by the unique
-  // whg_ebs_code (EBS677 → "… Guindy", EBS385 → plain). When the code is present
-  // and matches, trust it over the (ambiguous) name. If the code is present but
-  // unknown to UAT, fall through to name resolution rather than hard-failing.
+  // whg_ebs_code (EBS677 → "… Guindy", EBS385 → plain). A UNIQUE hit wins
+  // outright. An AMBIGUOUS hit (the same code sits on >1 customer — usually a
+  // stray code copied onto the wrong customer in ERP) is deferred: a manual alias
+  // below can still pin the right one; only if none does do we report it
+  // ambiguous. A code unknown to UAT falls through to name resolution.
+  let ambiguousByCode: CustomerMatch | null = null
   if (code && EBS_RE.test(code.trim())) {
     const hit = byEbs(idx, code)
-    if (hit) return hit
+    if (hit?.status === 'ok') return hit
+    if (hit?.status === 'ambiguous') ambiguousByCode = hit
   }
 
-  // 2) A manual alias points at the EXACT UAT customer — trust it (skip the
-  // ambiguity check). The target is either an EBS code ("EBS708" → resolve by the
-  // unique whg_ebs_code, to pin one of several same-named customers) or an exact
-  // customer name. Either way it must exist in UAT.
+  // 2) A manual alias points at the EXACT UAT customer — a deliberate pin, so it
+  // overrides an ambiguous code. The target is either an EBS code ("EBS708" →
+  // resolve by the unique whg_ebs_code) or an exact customer name; either must
+  // exist in UAT.
   const aliasTarget = ALIAS_BY_KEY.get(aliasCustKey(raw))
   if (aliasTarget) {
     // An alias that explicitly names an EBS code MUST resolve to it — a miss is
@@ -115,6 +119,9 @@ function match(idx: CustIndex, raw: string, code?: string): CustomerMatch {
     if (EBS_RE.test(aliasTarget)) return byEbs(idx, aliasTarget) ?? { status: 'missing', name: '' }
     return idx.names.has(aliasTarget) ? { status: 'ok', name: aliasTarget } : { status: 'missing', name: '' }
   }
+
+  // 3) No alias rescued it — now surface an ambiguous code if we deferred one.
+  if (ambiguousByCode) return ambiguousByCode
 
   const norm = normalizeCustomer(raw)
   if (!norm) return { status: 'missing', name: '' }

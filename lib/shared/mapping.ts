@@ -31,6 +31,7 @@ import { parseNum, type NormKind } from './normalize'
 
 export const DOCTYPE = 'Secondary Data Entry'
 export const CHILD_TABLE = 'items' // parent Table fieldname holding child rows
+export const CHILD_DOCTYPE = 'Secondary Data Table' // the child-row doctype (for direct list queries)
 // Not submittable — plain create/update/delete (no cancel step).
 export const SUBMITTABLE = false
 

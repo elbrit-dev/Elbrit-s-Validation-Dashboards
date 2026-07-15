@@ -28,6 +28,26 @@ const addRow = (acc: Totals, row: RowRec) => {
   for (const [k] of QTY_KEYS) acc[k] += numOf(row.raw, k)
 }
 const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+// Sheet figure alongside the ERP-posted figure. `shown` gates the ERP side (only
+// after a comparison, and only for a resolved customer); `erp === undefined` after
+// that means the customer resolved but has nothing posted in ERP for this range.
+const near = (a: number, b: number) => Math.abs(a - b) < 0.005
+function NumPair({ sheet, erp, shown }: { sheet: number; erp: number | undefined; shown: boolean }) {
+  if (!shown) return <span className="mono">{fmt(sheet)}</span>
+  if (erp === undefined)
+    return (
+      <span className="mono">
+        {fmt(sheet)} <span className="muted"> → n/a</span>
+      </span>
+    )
+  const ok = near(sheet, erp)
+  return (
+    <span className="mono">
+      {fmt(sheet)}
+      <span style={{ color: ok ? 'var(--green)' : 'var(--red)' }}> → {fmt(erp)}</span>
+    </span>
+  )
+}
 
 // One sales team (role profile) within a customer, with its own line subtotal.
 interface Team {
@@ -179,6 +199,13 @@ export default function EbsValidationPage() {
   const [onlyMulti, setOnlyMulti] = useState(false)
   const [onlyUnmatched, setOnlyUnmatched] = useState(false)
   const [drawer, setDrawer] = useState<EbsGroup | null>(null)
+  // ERP-posted totals per resolved customer (sheet-vs-ERP comparison). Populated
+  // on demand by "Compare with ERP"; empty until then so the table shows sheet
+  // figures only.
+  const [erpTotals, setErpTotals] = useState<Map<string, Totals>>(new Map())
+  const [erpFetched, setErpFetched] = useState(false)
+  const [erpBusy, setErpBusy] = useState(false)
+  const [erpError, setErpError] = useState('')
 
   useEffect(() => {
     ;(async () => {
@@ -238,12 +265,66 @@ export default function EbsValidationPage() {
     })
   }, [groups, search, onlyMulti, onlyUnmatched])
 
+  // Changing the selected sheets makes any prior ERP comparison stale — clear it.
+  useEffect(() => {
+    setErpFetched(false)
+    setErpTotals(new Map())
+    setErpError('')
+  }, [selectedFiles])
+
+  // Fetch what is already posted in ERP for the resolved customers, scoped to the
+  // sheet's own date range, and stash the per-customer totals for the sheet-vs-ERP
+  // columns.
+  async function compareErp() {
+    setErpBusy(true)
+    setErpError('')
+    try {
+      const customers = [...new Set(groups.filter((g) => g.status === 'ok').map((g) => g.customer))]
+      const rows = allRows.filter((r) => selectedFiles.has(r.fileName))
+      const dates = rows.map((r) => dateOf(r.raw)).filter(Boolean).sort()
+      const from = dates[0]
+      const to = dates[dates.length - 1]
+      const res = await fetch('/api/erp/secondary-totals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customers, from, to }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error((body.detail as string) || (body.error as string) || `HTTP ${res.status}`)
+      const m = new Map<string, Totals>()
+      for (const [k, v] of Object.entries((body.totals || {}) as Record<string, Totals>)) m.set(k, v)
+      setErpTotals(m)
+      setErpFetched(true)
+    } catch (e) {
+      setErpError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setErpBusy(false)
+    }
+  }
+
+  // ERP total for a group's resolved customer — only meaningful once compared and
+  // when the customer resolved to UAT.
+  const erpOf = (g: EbsGroup): Totals | undefined => (erpFetched && g.status === 'ok' ? erpTotals.get(g.customer) : undefined)
+
   const columns: VColumn<EbsGroup>[] = [
-    { key: 'ebs', header: 'EBS code', width: 120, render: (g) => <span className="mono">{g.ebsCodes.join(', ') || '—'}</span> },
+    {
+      key: 'ebs',
+      header: 'EBS (sheet → ERP)',
+      width: 200,
+      render: (g) => (
+        <span className="mono">
+          {g.ebsCodes.join(', ') || '—'}
+          <span style={{ color: g.ebsMatch === 'ok' ? 'var(--green)' : g.ebsMatch === 'mismatch' ? 'var(--red)' : 'var(--muted)' }}>
+            {' → '}
+            {g.erpEbs.join(', ') || '—'}
+          </span>
+        </span>
+      ),
+    },
     {
       key: 'ebsCheck',
       header: 'EBS check',
-      width: 110,
+      width: 100,
       render: (g) =>
         g.ebsMatch === 'ok' ? (
           <span style={{ color: 'var(--green)' }}>✓ match</span>
@@ -255,25 +336,29 @@ export default function EbsValidationPage() {
     },
     {
       key: 'customer',
-      header: 'Customer (UAT)',
-      width: 300,
+      header: 'Customer (sheet → UAT)',
+      width: 340,
       render: (g) => (
         <span>
           <span className={`pill ${g.status === 'ok' ? 'ready' : g.status === 'unchecked' ? '' : 'error'}`} style={{ marginRight: 8 }}>
             {g.status}
           </span>
+          <span className="muted">{g.sheetNames.join(', ') || '—'}</span>
+          {' → '}
           {g.customer}
         </span>
       ),
     },
     { key: 'hq', header: 'HQ', width: 130, render: (g) => g.hqs.join(', ') || <span className="muted">—</span> },
-    { key: 'items', header: 'Items', width: 70, render: (g) => g.itemCount },
-    { key: 'sqty', header: 'Sec. Qty', width: 100, render: (g) => <span className="mono">{fmt(g.totals.sales_qty)}</span> },
-    { key: 'sval', header: 'Sec. Value', width: 120, render: (g) => <span className="mono">{fmt(g.totals.sales_value)}</span> },
+    { key: 'items', header: 'Items', width: 60, render: (g) => g.itemCount },
+    { key: 'sqty', header: 'Sec. Qty (sheet → ERP)', width: 190, render: (g) => <NumPair sheet={g.totals.sales_qty} erp={erpOf(g)?.sales_qty} shown={erpFetched && g.status === 'ok'} /> },
+    { key: 'sval', header: 'Sec. Value (sheet → ERP)', width: 210, render: (g) => <NumPair sheet={g.totals.sales_value} erp={erpOf(g)?.sales_value} shown={erpFetched && g.status === 'ok'} /> },
+    { key: 'cqty', header: 'Clos. Qty (sheet → ERP)', width: 190, render: (g) => <NumPair sheet={g.totals.closing_qty} erp={erpOf(g)?.closing_qty} shown={erpFetched && g.status === 'ok'} /> },
+    { key: 'cval', header: 'Clos. Value (sheet → ERP)', width: 210, render: (g) => <NumPair sheet={g.totals.closing_balance} erp={erpOf(g)?.closing_balance} shown={erpFetched && g.status === 'ok'} /> },
     {
       key: 'teams',
       header: 'Sales teams',
-      width: 150,
+      width: 140,
       render: (g) => (
         <span>
           {g.teams.filter((t) => t.name !== '(unmapped)').length || '—'}
@@ -344,9 +429,18 @@ export default function EbsValidationPage() {
       )}
 
       <section className="panel">
-        <h2>
-          By customer <span className="hint">{visible.length.toLocaleString()} of {stats.total.toLocaleString()} · click a row to see the sales-team breakdown</span>
-        </h2>
+        <div className="row-flex spread">
+          <h2>
+            By customer <span className="hint">{visible.length.toLocaleString()} of {stats.total.toLocaleString()} · click a row to see the sales-team breakdown</span>
+          </h2>
+          <div className="row-flex" style={{ gap: 10 }}>
+            {erpError && <span className="small" style={{ color: 'var(--red)' }}>{erpError}</span>}
+            {erpFetched && !erpError && <span className="small muted">ERP compared · {erpTotals.size.toLocaleString()} posted</span>}
+            <button className="primary" onClick={compareErp} disabled={erpBusy}>
+              {erpBusy ? 'Comparing…' : erpFetched ? 'Re-compare with ERP' : 'Compare with ERP'}
+            </button>
+          </div>
+        </div>
         <div className="row-flex" style={{ marginBottom: 12 }}>
           <label className="row-flex" style={{ gap: 6 }}>
             <input type="checkbox" checked={onlyMulti} onChange={(e) => setOnlyMulti(e.target.checked)} /> Only multiple sales teams
@@ -359,7 +453,13 @@ export default function EbsValidationPage() {
         <VirtualTable rows={visible} columns={columns} onRowClick={setDrawer} height={560} empty="No customers match the filters" />
       </section>
 
-      {drawer && <EbsDrawer g={drawer} onClose={() => setDrawer(null)} />}
+      {drawer && (
+        <EbsDrawer
+          g={drawer}
+          erp={erpFetched && drawer.status === 'ok' ? erpTotals.get(drawer.customer) : undefined}
+          onClose={() => setDrawer(null)}
+        />
+      )}
     </ErrorBoundary>
   )
 }
@@ -377,7 +477,7 @@ function TotalsRow({ totals }: { totals: Totals }) {
   )
 }
 
-function EbsDrawer({ g, onClose }: { g: EbsGroup; onClose: () => void }) {
+function EbsDrawer({ g, erp, onClose }: { g: EbsGroup; erp?: Totals; onClose: () => void }) {
   return (
     <>
       <div className="drawer-overlay" onClick={onClose} />
@@ -405,8 +505,19 @@ function EbsDrawer({ g, onClose }: { g: EbsGroup; onClose: () => void }) {
           <p className="muted small">Sheet name(s): {g.sheetNames.map((n) => <span key={n} className="mono" style={{ marginRight: 8 }}>{n}</span>)}</p>
         )}
 
-        <h4>Customer total (from the sheet)</h4>
-        <TotalsRow totals={g.totals} />
+        <h4>Customer total {erp ? '(sheet → ERP posted)' : '(from the sheet)'}</h4>
+        {erp ? (
+          <div className="kv">
+            {QTY_KEYS.map(([key, label]) => (
+              <div key={key} style={{ display: 'contents' }}>
+                <span className="k">{label}</span>
+                <NumPair sheet={g.totals[key]} erp={erp[key]} shown />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <TotalsRow totals={g.totals} />
+        )}
 
         <h4>
           Sales teams ({g.teams.filter((t) => t.name !== '(unmapped)').length})

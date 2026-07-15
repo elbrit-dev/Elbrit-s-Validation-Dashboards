@@ -42,7 +42,9 @@ interface EbsGroup {
   id: string
   customer: string // resolved UAT customer, else the EBS code / sheet name
   status: 'ok' | 'ambiguous' | 'missing' | 'unchecked'
-  ebsCodes: string[]
+  ebsCodes: string[] // the sheet's Stockist Code(s) for this customer
+  erpEbs: string[] // the resolved UAT customer's ERP EBS codes (both columns)
+  ebsMatch: 'ok' | 'mismatch' | 'na' // does the sheet EBS match one of the ERP columns?
   sheetNames: string[]
   hqs: string[]
   dates: string[]
@@ -86,11 +88,21 @@ function buildGroups(rows: RowRec[]): EbsGroup[] {
     const mappedTeams = teams.filter((t) => t.name !== '(unmapped)')
     const first = rs[0]
     const status = first.distStatus ?? 'unchecked'
+    const sheetCodes = uniq(rs.map((r) => distributorCodeOf(r.raw)))
+    const erpEbs = uniq(rs.flatMap((r) => r.custEbsCodes ?? []))
+    // The sheet's EBS is "correct" when every Stockist Code it carries is one of
+    // the resolved customer's ERP EBS codes (primary OR secondary column). Only
+    // meaningful once the customer resolved — otherwise the match status covers it.
+    const erpUp = new Set(erpEbs.map((c) => c.toUpperCase()))
+    const ebsMatch: 'ok' | 'mismatch' | 'na' =
+      status === 'ok' && sheetCodes.length > 0 ? (sheetCodes.every((c) => erpUp.has(c.toUpperCase())) ? 'ok' : 'mismatch') : 'na'
     groups.push({
       id: key,
       customer: first.resolvedDistributor || key,
       status,
-      ebsCodes: uniq(rs.map((r) => distributorCodeOf(r.raw))),
+      ebsCodes: sheetCodes,
+      erpEbs,
+      ebsMatch,
       sheetNames: uniq(rs.map((r) => distributorOf(r.raw))),
       hqs: uniq(rs.map((r) => r.custom_hq || '')),
       dates: uniq(rs.map((r) => dateOf(r.raw))),
@@ -162,8 +174,23 @@ export default function EbsValidationPage() {
       setSession(s)
       const rows = await getDb().rows.where('sessionId').equals(s.id).toArray()
       rows.sort((a, b) => (a.rid || 0) - (b.rid || 0))
-      setGroups(buildGroups(rows))
-      setProblems(buildProblems(rows))
+      const grps = buildGroups(rows)
+      setGroups(grps)
+      // EBS-code mismatches (customer resolved, but the sheet's Stockist Code is
+      // not one of the customer's ERP EBS columns) lead the list, then line-level
+      // customer/item resolution failures.
+      const ebsProblems: Problem[] = grps
+        .filter((g) => g.ebsMatch === 'mismatch')
+        .map((g) => ({
+          ebs: g.ebsCodes.join(', '),
+          customer: g.customer,
+          sheetItem: '(customer EBS)',
+          erpItem: g.erpEbs.join(', ') || '(none)',
+          issue: `sheet EBS ${g.ebsCodes.join(', ')} is not on the resolved customer (ERP EBS: ${g.erpEbs.join(', ') || 'none'})`,
+          salesQty: g.totals.sales_qty,
+          salesVal: g.totals.sales_value,
+        }))
+      setProblems([...ebsProblems, ...buildProblems(rows)])
       setLoading(false)
     })()
   }, [])
@@ -195,6 +222,19 @@ export default function EbsValidationPage() {
 
   const columns: VColumn<EbsGroup>[] = [
     { key: 'ebs', header: 'EBS code', width: 120, render: (g) => <span className="mono">{g.ebsCodes.join(', ') || '—'}</span> },
+    {
+      key: 'ebsCheck',
+      header: 'EBS check',
+      width: 110,
+      render: (g) =>
+        g.ebsMatch === 'ok' ? (
+          <span style={{ color: 'var(--green)' }}>✓ match</span>
+        ) : g.ebsMatch === 'mismatch' ? (
+          <span style={{ color: 'var(--red)' }} title={`ERP EBS: ${g.erpEbs.join(', ') || 'none'}`}>✗ mismatch</span>
+        ) : (
+          <span className="muted">—</span>
+        ),
+    },
     {
       key: 'customer',
       header: 'Customer (UAT)',
@@ -314,6 +354,16 @@ function EbsDrawer({ g, onClose }: { g: EbsGroup; onClose: () => void }) {
           <span className={`pill ${g.status === 'ok' ? 'ready' : g.status === 'unchecked' ? '' : 'error'}`}>{g.status}</span> ·{' '}
           {g.dates.join(', ')} · {g.itemCount} lines
         </p>
+        <div className="kv">
+          <span className="k">Sheet EBS</span>
+          <span className="mono">{g.ebsCodes.join(', ') || '—'}</span>
+          <span className="k">ERP EBS (both columns)</span>
+          <span className="mono">{g.erpEbs.join(', ') || '—'}</span>
+          <span className="k">EBS check</span>
+          <span style={{ color: g.ebsMatch === 'ok' ? 'var(--green)' : g.ebsMatch === 'mismatch' ? 'var(--red)' : 'inherit' }}>
+            {g.ebsMatch === 'ok' ? '✓ sheet EBS matches an ERP column' : g.ebsMatch === 'mismatch' ? '✗ sheet EBS not on the ERP customer' : '— not checked'}
+          </span>
+        </div>
         {g.sheetNames.length > 0 && (
           <p className="muted small">Sheet name(s): {g.sheetNames.map((n) => <span key={n} className="mono" style={{ marginRight: 8 }}>{n}</span>)}</p>
         )}

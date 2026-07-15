@@ -13,12 +13,14 @@ export interface CustomerMatch {
   status: 'ok' | 'ambiguous' | 'missing'
   name: string
   options?: string[]
+  ebsCodes?: string[] // the matched customer's ERP EBS codes (both columns), for sheet-vs-ERP validation
 }
 
 interface CustIndex {
   byNorm: Map<string, string[]>
   names: Set<string> // exact customer names (for alias targets)
   byEbs: Map<string, string[]> // UPPERCASE EBS code (from any EBS field) → customer name(s)
+  ebsByName: Map<string, string[]> // customer name → its UPPERCASE EBS codes (primary + secondary)
   loadedAt: number
 }
 
@@ -55,10 +57,14 @@ async function getIndex(): Promise<CustIndex> {
   const byNorm = new Map<string, string[]>()
   const names = new Set<string>()
   const byEbs = new Map<string, string[]>()
+  const ebsByName = new Map<string, string[]>()
   const addEbs = (code: string, nm: string) => {
     const e = byEbs.get(code)
     if (e) { if (!e.includes(nm)) e.push(nm) } // dedupe: same code in two fields of one customer ≠ ambiguous
     else byEbs.set(code, [nm])
+    const n = ebsByName.get(nm)
+    if (n) { if (!n.includes(code)) n.push(code) }
+    else ebsByName.set(nm, [code])
   }
   let offset = 0
   for (;;) {
@@ -82,13 +88,16 @@ async function getIndex(): Promise<CustIndex> {
     offset += docs.length
     if (offset > HARD_CAP) break
   }
-  cache = { byNorm, names, byEbs, loadedAt: Date.now() }
+  cache = { byNorm, names, byEbs, ebsByName, loadedAt: Date.now() }
   return cache
 }
 
+// Build an 'ok' match carrying the customer's ERP EBS codes (for validation).
+const okMatch = (idx: CustIndex, name: string): CustomerMatch => ({ status: 'ok', name, ebsCodes: idx.ebsByName.get(name) ?? [] })
+
 function byEbs(idx: CustIndex, ebs: string): CustomerMatch | null {
   const hit = idx.byEbs.get(ebs.trim().toUpperCase())
-  if (hit && hit.length === 1) return { status: 'ok', name: hit[0] }
+  if (hit && hit.length === 1) return okMatch(idx, hit[0])
   if (hit && hit.length > 1) return { status: 'ambiguous', name: '', options: hit }
   return null
 }
@@ -117,7 +126,7 @@ function match(idx: CustIndex, raw: string, code?: string): CustomerMatch {
     // An alias that explicitly names an EBS code MUST resolve to it — a miss is
     // a real config error, so don't fall back to the name here.
     if (EBS_RE.test(aliasTarget)) return byEbs(idx, aliasTarget) ?? { status: 'missing', name: '' }
-    return idx.names.has(aliasTarget) ? { status: 'ok', name: aliasTarget } : { status: 'missing', name: '' }
+    return idx.names.has(aliasTarget) ? okMatch(idx, aliasTarget) : { status: 'missing', name: '' }
   }
 
   // 3) No alias rescued it — now surface an ambiguous code if we deferred one.
@@ -126,7 +135,7 @@ function match(idx: CustIndex, raw: string, code?: string): CustomerMatch {
   const norm = normalizeCustomer(raw)
   if (!norm) return { status: 'missing', name: '' }
   const hit = idx.byNorm.get(norm)
-  if (hit && hit.length === 1) return { status: 'ok', name: hit[0] }
+  if (hit && hit.length === 1) return okMatch(idx, hit[0])
   if (hit && hit.length > 1) return { status: 'ambiguous', name: '', options: hit }
   return { status: 'missing', name: '' }
 }

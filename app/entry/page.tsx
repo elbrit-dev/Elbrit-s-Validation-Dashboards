@@ -30,7 +30,9 @@ type Busy =
 
 // Result of matching a sheet product / stockist to a canonical UAT record.
 type ItemMatch = { status: 'ok' | 'ambiguous' | 'missing'; name: string; options?: string[] }
-type CustomerMatch = ItemMatch
+// Customer match also carries the matched customer's ERP EBS codes (both
+// columns) so EBS Validation can confirm the sheet's Stockist Code is one of them.
+type CustomerMatch = ItemMatch & { ebsCodes?: string[] }
 
 // A single prominent progress line for whatever operation is running.
 // `pct` null = indeterminate (no known total, e.g. triage).
@@ -316,6 +318,7 @@ export default function EntryPage() {
           resolvedDistributor: cm?.name || '',
           distStatus,
           distOptions: cm?.options,
+          custEbsCodes: cm?.ebsCodes,
           runStatus: undefined,
           runError: undefined,
         }

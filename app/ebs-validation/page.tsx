@@ -154,10 +154,26 @@ function buildProblems(rows: RowRec[]): Problem[] {
   return out
 }
 
+// Turn EBS-code mismatch groups into problem rows (led list) — a resolved
+// customer whose sheet Stockist Code is on neither ERP EBS column.
+function ebsMismatchProblems(grps: EbsGroup[]): Problem[] {
+  return grps
+    .filter((g) => g.ebsMatch === 'mismatch')
+    .map((g) => ({
+      ebs: g.ebsCodes.join(', '),
+      customer: g.customer,
+      sheetItem: '(customer EBS)',
+      erpItem: g.erpEbs.join(', ') || '(none)',
+      issue: `sheet EBS ${g.ebsCodes.join(', ')} is not on the resolved customer (ERP EBS: ${g.erpEbs.join(', ') || 'none'})`,
+      salesQty: g.totals.sales_qty,
+      salesVal: g.totals.sales_value,
+    }))
+}
+
 export default function EbsValidationPage() {
   const [session, setSession] = useState<SessionRec | null>(null)
-  const [groups, setGroups] = useState<EbsGroup[]>([])
-  const [problems, setProblems] = useState<Problem[]>([])
+  const [allRows, setAllRows] = useState<RowRec[]>([])
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [onlyMulti, setOnlyMulti] = useState(false)
@@ -174,26 +190,28 @@ export default function EbsValidationPage() {
       setSession(s)
       const rows = await getDb().rows.where('sessionId').equals(s.id).toArray()
       rows.sort((a, b) => (a.rid || 0) - (b.rid || 0))
-      const grps = buildGroups(rows)
-      setGroups(grps)
-      // EBS-code mismatches (customer resolved, but the sheet's Stockist Code is
-      // not one of the customer's ERP EBS columns) lead the list, then line-level
-      // customer/item resolution failures.
-      const ebsProblems: Problem[] = grps
-        .filter((g) => g.ebsMatch === 'mismatch')
-        .map((g) => ({
-          ebs: g.ebsCodes.join(', '),
-          customer: g.customer,
-          sheetItem: '(customer EBS)',
-          erpItem: g.erpEbs.join(', ') || '(none)',
-          issue: `sheet EBS ${g.ebsCodes.join(', ')} is not on the resolved customer (ERP EBS: ${g.erpEbs.join(', ') || 'none'})`,
-          salesQty: g.totals.sales_qty,
-          salesVal: g.totals.sales_value,
-        }))
-      setProblems([...ebsProblems, ...buildProblems(rows)])
+      setAllRows(rows)
+      setSelectedFiles(new Set(rows.map((r) => r.fileName))) // show every loaded file by default
       setLoading(false)
     })()
   }, [])
+
+  // Loaded files (sheets) in this session — pick which to validate.
+  const files = useMemo(() => [...new Set(allRows.map((r) => r.fileName))].sort(), [allRows])
+  const toggleFile = (f: string) =>
+    setSelectedFiles((prev) => {
+      const next = new Set(prev)
+      if (next.has(f)) next.delete(f)
+      else next.add(f)
+      return next
+    })
+
+  // Everything downstream is derived from ONLY the selected files — no reload.
+  const { groups, problems } = useMemo(() => {
+    const rows = allRows.filter((r) => selectedFiles.has(r.fileName))
+    const grps = buildGroups(rows)
+    return { groups: grps, problems: [...ebsMismatchProblems(grps), ...buildProblems(rows)] }
+  }, [allRows, selectedFiles])
 
   const stats = useMemo(() => {
     let matched = 0
@@ -266,7 +284,7 @@ export default function EbsValidationPage() {
   ]
 
   if (loading) return <p className="muted">Loading session…</p>
-  if (!session || groups.length === 0)
+  if (!session || allRows.length === 0)
     return (
       <div className="panel">
         <p className="muted">No session loaded yet.</p>
@@ -276,6 +294,25 @@ export default function EbsValidationPage() {
 
   return (
     <ErrorBoundary>
+      {files.length > 1 && (
+        <section className="panel">
+          <div className="row-flex spread" style={{ marginBottom: 8 }}>
+            <h2 style={{ margin: 0 }}>Loaded sheets <span className="hint">tick the sheet(s) to validate — everything below is just these</span></h2>
+            <div className="row-flex" style={{ gap: 8 }}>
+              <button onClick={() => setSelectedFiles(new Set(files))}>All</button>
+              <button onClick={() => setSelectedFiles(new Set())}>None</button>
+            </div>
+          </div>
+          <div className="row-flex" style={{ flexWrap: 'wrap', gap: 12 }}>
+            {files.map((f) => (
+              <label key={f} className="row-flex" style={{ gap: 6 }}>
+                <input type="checkbox" checked={selectedFiles.has(f)} onChange={() => toggleFile(f)} /> {f}
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className="kpis">
         <div className="kpi"><div className="label">Customers</div><div className="value">{stats.total.toLocaleString()}</div></div>
         <div className="kpi green"><div className="label">Matched to UAT</div><div className="value">{stats.matched.toLocaleString()}</div></div>

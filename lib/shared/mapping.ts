@@ -82,8 +82,10 @@ export function stripEllipsis(s: string): string {
 //   "MY 20" / "MY20"                        → "MY 20"
 //   "BRITORVA 10F" / "BRITORVA 10 F"        → "BRITORVA 10 F"
 //   "CALBRIT 60K (8 PACKS)" / "CALBRIT 60K" → "CALBRIT 60 K"
+//   "GLIMIBRIT M2 AP" / "GLIMIBRIT M2"      → "GLIMIBRIT M 2"  (region tag dropped)
 export function normalizeItem(s: string): string {
   return String(s ?? '')
+    .replace(/\s+AP\s*$/i, ' ') // drop the trailing " AP" region tag → map to the base item
     .replace(/\([^)]*\)/g, ' ') // remove "(8 PACKS)" and similar parenthetical notes
     .replace(/-/g, ' ') // dashes → space
     .replace(/[^\x00-\x7F]/g, '') // drop non-ASCII (…, etc.)
@@ -96,13 +98,6 @@ export function normalizeItem(s: string): string {
     .replace(/[^A-Z0-9/ ]/g, '') // drop stray symbols like "+" so "C+ZD MAX" == "CZD MAX"
     .replace(/\s+/g, ' ')
     .trim()
-}
-
-// Region-suffixed SKUs like "GLIMIBRIT M2 15'S AP" are NOT in the UAT item
-// master (the " AP" region tag) — they must be left OUT of the write, not
-// flagged as errors. Detect the trailing standalone "AP" tag.
-export function isSkippedProduct(name: string): boolean {
-  return /\sAP\s*$/i.test(stripEllipsis(String(name ?? '')))
 }
 
 // Nomenclature key for matching a sheet Stockist to a UAT Customer name.

@@ -105,9 +105,47 @@ function buildGroups(rows: RowRec[]): EbsGroup[] {
   return groups
 }
 
+// A single sheet line that did NOT reconcile: the customer (EBS) didn't resolve,
+// or the item didn't resolve to a UAT Item. Surfaced as its own list so a bad
+// EBS/item match is visible with its sheet vs ERP names and quantities.
+interface Problem {
+  ebs: string
+  customer: string
+  sheetItem: string
+  erpItem: string
+  issue: string
+  salesQty: number
+  salesVal: number
+}
+
+function buildProblems(rows: RowRec[]): Problem[] {
+  const out: Problem[] = []
+  for (const r of rows) {
+    const custBad = r.distStatus && r.distStatus !== 'ok'
+    const itemBad = r.itemStatus && r.itemStatus !== 'ok' && r.itemStatus !== 'skip'
+    if (!custBad && !itemBad) continue
+    const issues: string[] = []
+    if (r.distStatus === 'missing') issues.push('customer (EBS) not found in UAT')
+    if (r.distStatus === 'ambiguous') issues.push(`customer ambiguous (${(r.distOptions || []).length})`)
+    if (r.itemStatus === 'missing') issues.push('item not found in UAT')
+    if (r.itemStatus === 'ambiguous') issues.push(`item ambiguous (${(r.itemOptions || []).length})`)
+    out.push({
+      ebs: distributorCodeOf(r.raw),
+      customer: r.resolvedDistributor || distributorOf(r.raw),
+      sheetItem: firstValue(r.raw, ['Product', 'Product Code']),
+      erpItem: r.resolvedItem || '',
+      issue: issues.join(' · '),
+      salesQty: numOf(r.raw, 'sales_qty'),
+      salesVal: numOf(r.raw, 'sales_value'),
+    })
+  }
+  return out
+}
+
 export default function EbsValidationPage() {
   const [session, setSession] = useState<SessionRec | null>(null)
   const [groups, setGroups] = useState<EbsGroup[]>([])
+  const [problems, setProblems] = useState<Problem[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [onlyMulti, setOnlyMulti] = useState(false)
@@ -125,6 +163,7 @@ export default function EbsValidationPage() {
       const rows = await getDb().rows.where('sessionId').equals(s.id).toArray()
       rows.sort((a, b) => (a.rid || 0) - (b.rid || 0))
       setGroups(buildGroups(rows))
+      setProblems(buildProblems(rows))
       setLoading(false)
     })()
   }, [])
@@ -202,7 +241,30 @@ export default function EbsValidationPage() {
         <div className="kpi green"><div className="label">Matched to UAT</div><div className="value">{stats.matched.toLocaleString()}</div></div>
         <div className="kpi red"><div className="label">Needs attention</div><div className="value">{stats.attention.toLocaleString()}</div></div>
         <div className="kpi amber"><div className="label">Multiple sales teams</div><div className="value">{stats.multi.toLocaleString()}</div></div>
+        <div className="kpi red"><div className="label">Unmatched lines</div><div className="value">{problems.length.toLocaleString()}</div></div>
       </div>
+
+      {problems.length > 0 && (
+        <section className="panel">
+          <h2>
+            Errors & mismatches <span className="hint">{problems.length.toLocaleString()} lines where the EBS/customer or item didn’t match UAT — fix these before writing</span>
+          </h2>
+          <VirtualTable
+            rows={problems}
+            columns={[
+              { key: 'ebs', header: 'EBS code', width: 110, render: (p) => <span className="mono">{p.ebs || '—'}</span> },
+              { key: 'customer', header: 'Customer', width: 240, render: (p) => p.customer || <span className="muted">—</span> },
+              { key: 'sheetItem', header: 'Item (sheet)', width: 200, render: (p) => <span className="mono">{p.sheetItem || '—'}</span> },
+              { key: 'erpItem', header: 'Item (ERP)', width: 200, render: (p) => (p.erpItem ? <span className="mono" style={{ color: 'var(--green)' }}>{p.erpItem}</span> : <span style={{ color: 'var(--red)' }}>not matched</span>) },
+              { key: 'sqty', header: 'Sec. Qty', width: 90, render: (p) => <span className="mono">{fmt(p.salesQty)}</span> },
+              { key: 'sval', header: 'Sec. Value', width: 110, render: (p) => <span className="mono">{fmt(p.salesVal)}</span> },
+              { key: 'issue', header: 'Issue', width: 320, render: (p) => <span style={{ color: 'var(--red)' }}>{p.issue}</span> },
+            ]}
+            height={Math.min(360, 60 + problems.length * 34)}
+            empty="No mismatches"
+          />
+        </section>
+      )}
 
       <section className="panel">
         <h2>

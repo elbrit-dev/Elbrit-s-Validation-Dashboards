@@ -55,6 +55,10 @@ export const ITEM_ALIASES: Record<string, string> = {
   'EXIPAM PLUS 15 S': 'EXIPAM PLUS',
   'FENZIT 600 SG CAP': 'FENZIT 600',
   'GLIMIBRIT M 05': 'GLIMIBRIT M 0.5',
+  // "15'S" pack size → base item (the " AP" region tag is already stripped by
+  // normalizeItem, so this covers "GLIMIBRIT M2 15'S" and "GLIMIBRIT M2 15'S AP").
+  "GLIMIBRIT M2 15 'S": 'GLIMIBRIT M2',
+  'GLIMIBRIT M2 15 S': 'GLIMIBRIT M2',
   'LINATO M 25500': 'LINATO M 2.5/500',
   'LINATO M 25/500': 'LINATO M 2.5/500',
   "MY 20 10 'S": 'MY20',

@@ -12,7 +12,7 @@ import { downloadFile } from '@/lib/client/driveClient'
 import { parseFile, triageAll, exportXlsx } from '@/lib/client/workers'
 import { runInBatches } from '@/lib/client/batchRunner'
 import { getDb, latestSession, clearSession, requestPersistence, markFilesCompleted, type RowRec, type SessionRec } from '@/lib/client/db'
-import { childRow, distributorOf, distributorCodeOf, distributorKeyOf, dateOf, firstValue, splitKey, KEY_SEP, isSkippedProduct } from '@/lib/shared/mapping'
+import { childRow, distributorOf, distributorCodeOf, distributorKeyOf, dateOf, firstValue, splitKey, KEY_SEP } from '@/lib/shared/mapping'
 import type { ErpSummary, RowResult, TriageAction, MappingResult } from '@/lib/shared/types'
 
 const LOOKUP_CHUNK = 90
@@ -294,14 +294,14 @@ export default function EntryPage() {
       const updated = rows.map((r, i) => {
         const prod = firstValue(r.raw, ['Product', 'Product Code'])
         const im = itemMatch.get(prod)
-        // Region SKUs ("… AP") are intentionally left out — not a conflict.
-        const itemStatus: 'ok' | 'ambiguous' | 'missing' | 'skip' = isSkippedProduct(prod) ? 'skip' : im?.status ?? 'missing'
+        // "… AP" region SKUs are no longer skipped: normalizeItem strips the " AP"
+        // tag so they resolve to the base item (e.g. GLIMIBRIT M2 15'S AP → GLIMIBRIT M2).
+        const itemStatus: 'ok' | 'ambiguous' | 'missing' = im?.status ?? 'missing'
         const cm = custMatch.get(distributorKeyOf(r.raw))
         const distStatus: 'ok' | 'ambiguous' | 'missing' = r.key ? cm?.status ?? 'missing' : 'missing'
         // A row is a conflict (excluded from writes) if its item OR its
-        // distributor can't be resolved, or it has no key. A 'skip' item is not
-        // a conflict — it's just dropped from the doc's items.
-        const itemBad = itemStatus !== 'ok' && itemStatus !== 'skip'
+        // distributor can't be resolved, or it has no key.
+        const itemBad = itemStatus !== 'ok'
         const bad = results[i].action === 'conflict' || itemBad || distStatus !== 'ok'
         const action: TriageAction = bad ? 'conflict' : results[i].action
         return {

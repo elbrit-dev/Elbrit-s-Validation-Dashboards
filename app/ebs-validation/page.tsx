@@ -1,0 +1,286 @@
+'use client'
+// EBS Validation — a per-CUSTOMER view of the loaded session. Instead of the
+// row-by-row rule dashboard (/validation), this groups every sheet row by its
+// resolved UAT customer (pinned via the EBS Stockist Code, with the alias/name
+// fallback) and shows the sheet totals + the sales team(s) that the lines map
+// to. The point: when one customer's lines span MULTIPLE sales teams you can
+// see and check that here, without downloading the sheet and filtering by hand.
+import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import ErrorBoundary from '@/components/ErrorBoundary'
+import VirtualTable, { type VColumn } from '@/components/VirtualTable'
+import { getDb, latestSession, type RowRec, type SessionRec } from '@/lib/client/db'
+import { numOf } from '@/lib/validation/rules'
+import { distributorOf, distributorCodeOf, dateOf, firstValue } from '@/lib/shared/mapping'
+
+const QTY_KEYS = [
+  ['opening_qty', 'Op. Qty'],
+  ['sales_qty', 'Sec. Qty'],
+  ['sales_value', 'Sec. Value'],
+  ['closing_qty', 'Clos. Qty'],
+  ['closing_balance', 'Clos. Value'],
+] as const
+
+type QtyKey = (typeof QTY_KEYS)[number][0]
+type Totals = Record<QtyKey, number>
+const zero = (): Totals => ({ opening_qty: 0, sales_qty: 0, sales_value: 0, closing_qty: 0, closing_balance: 0 })
+const addRow = (acc: Totals, row: RowRec) => {
+  for (const [k] of QTY_KEYS) acc[k] += numOf(row.raw, k)
+}
+const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 2 })
+
+// One sales team (role profile) within a customer, with its own line subtotal.
+interface Team {
+  name: string // custom_role_profile — the sales team; '(unmapped)' when blank
+  hq: string
+  department: string
+  rows: RowRec[]
+  totals: Totals
+}
+
+interface EbsGroup {
+  id: string
+  customer: string // resolved UAT customer, else the EBS code / sheet name
+  status: 'ok' | 'ambiguous' | 'missing' | 'unchecked'
+  ebsCodes: string[]
+  sheetNames: string[]
+  hqs: string[]
+  dates: string[]
+  rows: RowRec[]
+  teams: Team[]
+  totals: Totals
+  itemCount: number
+  multiTeam: boolean // lines map to more than one sales team
+}
+
+const uniq = (xs: string[]) => [...new Set(xs.filter((x) => x && x.trim() !== ''))]
+
+function buildGroups(rows: RowRec[]): EbsGroup[] {
+  const byCust = new Map<string, RowRec[]>()
+  for (const r of rows) {
+    // Group by the resolved customer when we have it; otherwise by the EBS code
+    // (so unresolved look-alikes still separate), else the raw stockist name.
+    const key = r.resolvedDistributor || distributorCodeOf(r.raw) || distributorOf(r.raw) || '(no distributor)'
+    const arr = byCust.get(key)
+    if (arr) arr.push(r)
+    else byCust.set(key, [r])
+  }
+
+  const groups: EbsGroup[] = []
+  for (const [key, rs] of byCust) {
+    const totals = zero()
+    const teamsMap = new Map<string, Team>()
+    for (const r of rs) {
+      addRow(totals, r)
+      const teamName = r.custom_role_profile || '(unmapped)'
+      const t = teamsMap.get(teamName) ?? { name: teamName, hq: r.custom_hq || '', department: r.custom_department || '', rows: [], totals: zero() }
+      t.rows.push(r)
+      addRow(t.totals, r)
+      if (!t.hq && r.custom_hq) t.hq = r.custom_hq
+      if (!t.department && r.custom_department) t.department = r.custom_department
+      teamsMap.set(teamName, t)
+    }
+    const teams = [...teamsMap.values()].sort((a, b) => b.totals.sales_value - a.totals.sales_value)
+    // "multiple sales team" = more than one MAPPED role profile (ignore the
+    // single '(unmapped)' bucket on its own).
+    const mappedTeams = teams.filter((t) => t.name !== '(unmapped)')
+    const first = rs[0]
+    const status = first.distStatus ?? 'unchecked'
+    groups.push({
+      id: key,
+      customer: first.resolvedDistributor || key,
+      status,
+      ebsCodes: uniq(rs.map((r) => distributorCodeOf(r.raw))),
+      sheetNames: uniq(rs.map((r) => distributorOf(r.raw))),
+      hqs: uniq(rs.map((r) => r.custom_hq || '')),
+      dates: uniq(rs.map((r) => dateOf(r.raw))),
+      rows: rs,
+      teams,
+      totals,
+      itemCount: rs.length,
+      multiTeam: mappedTeams.length > 1,
+    })
+  }
+  groups.sort((a, b) => b.totals.sales_value - a.totals.sales_value)
+  return groups
+}
+
+export default function EbsValidationPage() {
+  const [session, setSession] = useState<SessionRec | null>(null)
+  const [groups, setGroups] = useState<EbsGroup[]>([])
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [onlyMulti, setOnlyMulti] = useState(false)
+  const [onlyUnmatched, setOnlyUnmatched] = useState(false)
+  const [drawer, setDrawer] = useState<EbsGroup | null>(null)
+
+  useEffect(() => {
+    ;(async () => {
+      const s = await latestSession()
+      if (!s) {
+        setLoading(false)
+        return
+      }
+      setSession(s)
+      const rows = await getDb().rows.where('sessionId').equals(s.id).toArray()
+      rows.sort((a, b) => (a.rid || 0) - (b.rid || 0))
+      setGroups(buildGroups(rows))
+      setLoading(false)
+    })()
+  }, [])
+
+  const stats = useMemo(() => {
+    let matched = 0
+    let attention = 0
+    let multi = 0
+    for (const g of groups) {
+      if (g.status === 'ok') matched++
+      if (g.status === 'ambiguous' || g.status === 'missing') attention++
+      if (g.multiTeam) multi++
+    }
+    return { total: groups.length, matched, attention, multi }
+  }, [groups])
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return groups.filter((g) => {
+      if (onlyMulti && !g.multiTeam) return false
+      if (onlyUnmatched && g.status === 'ok') return false
+      if (q) {
+        const hay = `${g.customer} ${g.ebsCodes.join(' ')} ${g.sheetNames.join(' ')} ${g.teams.map((t) => t.name).join(' ')}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      return true
+    })
+  }, [groups, search, onlyMulti, onlyUnmatched])
+
+  const columns: VColumn<EbsGroup>[] = [
+    { key: 'ebs', header: 'EBS code', width: 120, render: (g) => <span className="mono">{g.ebsCodes.join(', ') || '—'}</span> },
+    {
+      key: 'customer',
+      header: 'Customer (UAT)',
+      width: 300,
+      render: (g) => (
+        <span>
+          <span className={`pill ${g.status === 'ok' ? 'ready' : g.status === 'unchecked' ? '' : 'error'}`} style={{ marginRight: 8 }}>
+            {g.status}
+          </span>
+          {g.customer}
+        </span>
+      ),
+    },
+    { key: 'hq', header: 'HQ', width: 130, render: (g) => g.hqs.join(', ') || <span className="muted">—</span> },
+    { key: 'items', header: 'Items', width: 70, render: (g) => g.itemCount },
+    { key: 'sqty', header: 'Sec. Qty', width: 100, render: (g) => <span className="mono">{fmt(g.totals.sales_qty)}</span> },
+    { key: 'sval', header: 'Sec. Value', width: 120, render: (g) => <span className="mono">{fmt(g.totals.sales_value)}</span> },
+    {
+      key: 'teams',
+      header: 'Sales teams',
+      width: 150,
+      render: (g) => (
+        <span>
+          {g.teams.filter((t) => t.name !== '(unmapped)').length || '—'}
+          {g.multiTeam && <span className="pill amber" style={{ marginLeft: 8 }}>multi</span>}
+        </span>
+      ),
+    },
+  ]
+
+  if (loading) return <p className="muted">Loading session…</p>
+  if (!session || groups.length === 0)
+    return (
+      <div className="panel">
+        <p className="muted">No session loaded yet.</p>
+        <Link href="/entry"><button className="primary">Go to Entry and load sheets</button></Link>
+      </div>
+    )
+
+  return (
+    <ErrorBoundary>
+      <div className="kpis">
+        <div className="kpi"><div className="label">Customers</div><div className="value">{stats.total.toLocaleString()}</div></div>
+        <div className="kpi green"><div className="label">Matched to UAT</div><div className="value">{stats.matched.toLocaleString()}</div></div>
+        <div className="kpi red"><div className="label">Needs attention</div><div className="value">{stats.attention.toLocaleString()}</div></div>
+        <div className="kpi amber"><div className="label">Multiple sales teams</div><div className="value">{stats.multi.toLocaleString()}</div></div>
+      </div>
+
+      <section className="panel">
+        <h2>
+          By customer <span className="hint">{visible.length.toLocaleString()} of {stats.total.toLocaleString()} · click a row to see the sales-team breakdown</span>
+        </h2>
+        <div className="row-flex" style={{ marginBottom: 12 }}>
+          <label className="row-flex" style={{ gap: 6 }}>
+            <input type="checkbox" checked={onlyMulti} onChange={(e) => setOnlyMulti(e.target.checked)} /> Only multiple sales teams
+          </label>
+          <label className="row-flex" style={{ gap: 6 }}>
+            <input type="checkbox" checked={onlyUnmatched} onChange={(e) => setOnlyUnmatched(e.target.checked)} /> Only needs attention
+          </label>
+          <input type="text" placeholder="Search customer / EBS / team…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
+        </div>
+        <VirtualTable rows={visible} columns={columns} onRowClick={setDrawer} height={560} empty="No customers match the filters" />
+      </section>
+
+      {drawer && <EbsDrawer g={drawer} onClose={() => setDrawer(null)} />}
+    </ErrorBoundary>
+  )
+}
+
+function TotalsRow({ totals }: { totals: Totals }) {
+  return (
+    <div className="kv">
+      {QTY_KEYS.map(([key, label]) => (
+        <div key={key} style={{ display: 'contents' }}>
+          <span className="k">{label}</span>
+          <span className="mono">{fmt(totals[key])}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function EbsDrawer({ g, onClose }: { g: EbsGroup; onClose: () => void }) {
+  return (
+    <>
+      <div className="drawer-overlay" onClick={onClose} />
+      <div className="drawer">
+        <div className="row-flex spread">
+          <h3>{g.customer}</h3>
+          <button onClick={onClose}>Close</button>
+        </div>
+        <p className="muted small">
+          <span className="mono">{g.ebsCodes.join(', ') || 'no EBS code'}</span> ·{' '}
+          <span className={`pill ${g.status === 'ok' ? 'ready' : g.status === 'unchecked' ? '' : 'error'}`}>{g.status}</span> ·{' '}
+          {g.dates.join(', ')} · {g.itemCount} lines
+        </p>
+        {g.sheetNames.length > 0 && (
+          <p className="muted small">Sheet name(s): {g.sheetNames.map((n) => <span key={n} className="mono" style={{ marginRight: 8 }}>{n}</span>)}</p>
+        )}
+
+        <h4>Customer total (from the sheet)</h4>
+        <TotalsRow totals={g.totals} />
+
+        <h4>
+          Sales teams ({g.teams.filter((t) => t.name !== '(unmapped)').length})
+          {g.multiTeam && <span className="pill amber" style={{ marginLeft: 8 }}>multiple</span>}
+        </h4>
+        {g.teams.map((t) => (
+          <div key={t.name} className="panel" style={{ marginBottom: 10 }}>
+            <div className="row-flex spread">
+              <strong>{t.name}</strong>
+              <span className="muted small">{t.hq}{t.department ? ` · ${t.department}` : ''} · {t.rows.length} items</span>
+            </div>
+            <TotalsRow totals={t.totals} />
+            <div className="kv" style={{ marginTop: 6 }}>
+              {t.rows.map((r, i) => (
+                <div key={i} style={{ display: 'contents' }}>
+                  <span className="k">{r.resolvedItem || firstValue(r.raw, ['Product', 'Product Code'])}</span>
+                  <span className="mono">Sec {fmt(numOf(r.raw, 'sales_qty'))} / {fmt(numOf(r.raw, 'sales_value'))}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}

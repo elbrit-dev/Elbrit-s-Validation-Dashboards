@@ -137,6 +137,19 @@ function buildGroups(rows: RowRec[]): EbsGroup[] {
   return groups
 }
 
+// A resolved customer whose sheet Sec/Closing Qty don't reconcile with what's
+// posted in ERP — the "if both don't match, error" list from the spec.
+interface QtyMismatch {
+  customer: string
+  ebs: string
+  sheetSecQty: number
+  erpSecQty: number
+  sheetClosQty: number
+  erpClosQty: number
+  secOff: boolean
+  closOff: boolean
+}
+
 // A single sheet line that did NOT reconcile: the customer (EBS) didn't resolve,
 // or the item didn't resolve to a UAT Item. Surfaced as its own list so a bad
 // EBS/item match is visible with its sheet vs ERP names and quantities.
@@ -198,6 +211,7 @@ export default function EbsValidationPage() {
   const [search, setSearch] = useState('')
   const [onlyMulti, setOnlyMulti] = useState(false)
   const [onlyUnmatched, setOnlyUnmatched] = useState(false)
+  const [onlyQtyOff, setOnlyQtyOff] = useState(false)
   const [drawer, setDrawer] = useState<EbsGroup | null>(null)
   // ERP-posted totals per resolved customer (sheet-vs-ERP comparison). Populated
   // on demand by "Compare with ERP"; empty until then so the table shows sheet
@@ -252,18 +266,58 @@ export default function EbsValidationPage() {
     return { total: groups.length, matched, attention, multi }
   }, [groups])
 
+  // Sheet-vs-ERP quantity reconciliation for one customer. Only meaningful after
+  // "Compare with ERP" and for a customer that resolved AND has something posted
+  // in ERP. Sec Qty and Closing Qty must each match within the same 0.005
+  // tolerance the value columns use; either one off = the qty check fails.
+  const qtyCheckOf = (g: EbsGroup): 'ok' | 'mismatch' | 'na' => {
+    if (!erpFetched || g.status !== 'ok') return 'na'
+    const erp = erpTotals.get(g.customer)
+    if (!erp) return 'na'
+    return near(g.totals.sales_qty, erp.sales_qty) && near(g.totals.closing_qty, erp.closing_qty) ? 'ok' : 'mismatch'
+  }
+
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
     return groups.filter((g) => {
       if (onlyMulti && !g.multiTeam) return false
       if (onlyUnmatched && g.status === 'ok') return false
+      if (onlyQtyOff && qtyCheckOf(g) !== 'mismatch') return false
       if (q) {
         const hay = `${g.customer} ${g.ebsCodes.join(' ')} ${g.sheetNames.join(' ')} ${g.teams.map((t) => t.name).join(' ')}`.toLowerCase()
         if (!hay.includes(q)) return false
       }
       return true
     })
-  }, [groups, search, onlyMulti, onlyUnmatched])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groups, search, onlyMulti, onlyUnmatched, onlyQtyOff, erpFetched, erpTotals])
+
+  // Customers whose sheet Sec/Closing Qty don't reconcile with ERP — the flagged
+  // "error" list. Empty until "Compare with ERP"; a customer with nothing posted
+  // in ERP (erp === undefined) is left neutral, not flagged, same as the columns.
+  const qtyMismatches = useMemo(() => {
+    if (!erpFetched) return [] as QtyMismatch[]
+    const out: QtyMismatch[] = []
+    for (const g of groups) {
+      if (g.status !== 'ok') continue
+      const erp = erpTotals.get(g.customer)
+      if (!erp) continue
+      const secOff = !near(g.totals.sales_qty, erp.sales_qty)
+      const closOff = !near(g.totals.closing_qty, erp.closing_qty)
+      if (!secOff && !closOff) continue
+      out.push({
+        customer: g.customer,
+        ebs: g.ebsCodes.join(', '),
+        sheetSecQty: g.totals.sales_qty,
+        erpSecQty: erp.sales_qty,
+        sheetClosQty: g.totals.closing_qty,
+        erpClosQty: erp.closing_qty,
+        secOff,
+        closOff,
+      })
+    }
+    return out
+  }, [groups, erpFetched, erpTotals])
 
   // Changing the selected sheets makes any prior ERP comparison stale — clear it.
   useEffect(() => {
@@ -356,6 +410,21 @@ export default function EbsValidationPage() {
     { key: 'cqty', header: 'Clos. Qty (sheet → ERP)', width: 190, render: (g) => <NumPair sheet={g.totals.closing_qty} erp={erpOf(g)?.closing_qty} shown={erpFetched && g.status === 'ok'} /> },
     { key: 'cval', header: 'Clos. Value (sheet → ERP)', width: 210, render: (g) => <NumPair sheet={g.totals.closing_balance} erp={erpOf(g)?.closing_balance} shown={erpFetched && g.status === 'ok'} /> },
     {
+      key: 'qtyCheck',
+      header: 'Qty check',
+      width: 110,
+      render: (g) => {
+        const s = qtyCheckOf(g)
+        return s === 'ok' ? (
+          <span style={{ color: 'var(--green)' }}>✓ match</span>
+        ) : s === 'mismatch' ? (
+          <span style={{ color: 'var(--red)' }} title="Sheet Sec/Closing Qty differ from what's posted in ERP">✗ mismatch</span>
+        ) : (
+          <span className="muted">—</span>
+        )
+      },
+    },
+    {
       key: 'teams',
       header: 'Sales teams',
       width: 140,
@@ -404,6 +473,7 @@ export default function EbsValidationPage() {
         <div className="kpi red"><div className="label">Needs attention</div><div className="value">{stats.attention.toLocaleString()}</div></div>
         <div className="kpi amber"><div className="label">Multiple sales teams</div><div className="value">{stats.multi.toLocaleString()}</div></div>
         <div className="kpi red"><div className="label">Unmatched lines</div><div className="value">{problems.length.toLocaleString()}</div></div>
+        <div className="kpi red"><div className="label">Qty mismatches</div><div className="value">{erpFetched ? qtyMismatches.length.toLocaleString() : '—'}</div></div>
       </div>
 
       {problems.length > 0 && (
@@ -428,6 +498,29 @@ export default function EbsValidationPage() {
         </section>
       )}
 
+      {qtyMismatches.length > 0 && (
+        <section className="panel">
+          <h2>
+            Quantity mismatches{' '}
+            <span className="hint">
+              {qtyMismatches.length.toLocaleString()} customer(s) whose sheet Sec/Closing Qty don’t match what’s posted in ERP — reconcile before writing
+            </span>
+          </h2>
+          <VirtualTable
+            rows={qtyMismatches}
+            columns={[
+              { key: 'customer', header: 'Customer', width: 260, render: (m) => m.customer },
+              { key: 'ebs', header: 'EBS', width: 120, render: (m) => <span className="mono">{m.ebs || '—'}</span> },
+              { key: 'secqty', header: 'Sec. Qty (sheet → ERP)', width: 200, render: (m) => <span className="mono" style={{ color: m.secOff ? 'var(--red)' : 'inherit' }}>{fmt(m.sheetSecQty)} → {fmt(m.erpSecQty)}</span> },
+              { key: 'closqty', header: 'Clos. Qty (sheet → ERP)', width: 200, render: (m) => <span className="mono" style={{ color: m.closOff ? 'var(--red)' : 'inherit' }}>{fmt(m.sheetClosQty)} → {fmt(m.erpClosQty)}</span> },
+              { key: 'issue', header: 'Issue', width: 260, render: (m) => <span style={{ color: 'var(--red)' }}>{[m.secOff && 'Sec Qty differs', m.closOff && 'Closing Qty differs'].filter(Boolean).join(' · ')}</span> },
+            ]}
+            height={Math.min(360, 60 + qtyMismatches.length * 34)}
+            empty="No quantity mismatches"
+          />
+        </section>
+      )}
+
       <section className="panel">
         <div className="row-flex spread">
           <h2>
@@ -447,6 +540,9 @@ export default function EbsValidationPage() {
           </label>
           <label className="row-flex" style={{ gap: 6 }}>
             <input type="checkbox" checked={onlyUnmatched} onChange={(e) => setOnlyUnmatched(e.target.checked)} /> Only needs attention
+          </label>
+          <label className="row-flex" style={{ gap: 6 }} title={erpFetched ? '' : 'Compare with ERP first'}>
+            <input type="checkbox" checked={onlyQtyOff} disabled={!erpFetched} onChange={(e) => setOnlyQtyOff(e.target.checked)} /> Only qty mismatches
           </label>
           <input type="text" placeholder="Search customer / EBS / team…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
         </div>

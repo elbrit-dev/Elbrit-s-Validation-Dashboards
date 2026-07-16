@@ -16,6 +16,7 @@ import VirtualTable, { type VColumn } from '@/components/VirtualTable'
 import { getDb, latestSession, type RowRec, type SessionRec } from '@/lib/client/db'
 import { dateOf, distributorOf, firstValue, CHILD_FIELDS } from '@/lib/shared/mapping'
 import { parseNum } from '@/lib/shared/normalize'
+import { exportXlsx } from '@/lib/client/workers'
 
 interface ErpLine {
   customer: string
@@ -187,6 +188,30 @@ export default function ValidationPage() {
       return next
     })
 
+  // Export exactly what the filters currently show.
+  const exportErp = async () => {
+    await exportXlsx(
+      [
+        {
+          name: 'ERP DATA',
+          rows: visible.map((r) => ({
+            Customer: r.customer,
+            Item: r.item,
+            'Op. Qty': r.opening_qty,
+            'Sec. Qty': r.sales_qty,
+            'Sec. Value': r.sales_value,
+            'Clos. Qty': r.closing_qty,
+            'Clos. Value': r.closing_balance,
+            Department: r.custom_department,
+            'Role Profile': r.custom_role_profile,
+            HQ: r.custom_hq,
+          })),
+        },
+      ],
+      'erp-data.xlsx',
+    )
+  }
+
   const columns: VColumn<ErpLine>[] = [
     { key: 'customer', header: 'Customer', width: 240, render: (r) => orDash(r.customer) },
     { key: 'item', header: 'Item', width: 200, render: (r) => mono(r.item) },
@@ -231,6 +256,7 @@ export default function ValidationPage() {
           </h2>
           <div className="row-flex" style={{ gap: 10 }}>
             {error && <span className="small" style={{ color: 'var(--red)' }}>{error}</span>}
+            <button onClick={exportErp} disabled={!fetched || visible.length === 0}>⬇ Export</button>
             <button className="primary" onClick={loadErp} disabled={busy || customers.length === 0}>
               {busy ? 'Loading…' : fetched ? 'Refresh from ERP' : 'Load ERP data'}
             </button>
@@ -457,14 +483,31 @@ const CHIP_FIELDS: { key: string; label: string }[] = [
   { key: 'state', label: 'Wrong state' },
 ]
 
-function CmpNumCell({ ok, off, sheet, erp }: { ok: boolean; off: boolean; sheet: number; erp: number }) {
-  if (!ok) return <span className="muted">—</span>
-  if (!off) return <span style={{ color: 'var(--green)' }}>✓</span>
-  return (
-    <span className="mono" style={{ color: 'var(--red)' }} title={`sheet ${fmt(sheet)} → ERP ${fmt(erp)}`}>
-      {fmt(sheet)}→{fmt(erp)}
-    </span>
-  )
+// A comparison row flattened for xlsx export — sheet & ERP value side by side
+// for each metric, plus a match flag and the status columns.
+function cmpToRow(c: Cmp): Record<string, unknown> {
+  const status = !c.customerOk
+    ? 'customer not matched'
+    : !c.itemResolved
+      ? 'item not matched'
+      : c.wrongStateOnly
+        ? `wrong state (ERP: ${c.otherStates.join(', ')})`
+        : !c.itemOk
+          ? 'item not in ERP'
+          : c.issues.length
+            ? 'value mismatch'
+            : 'ok'
+  const r: Record<string, unknown> = { Customer: c.customer, Item: c.item, Status: status }
+  for (const f of NUM_FIELDS) {
+    r[`${f.label} (sheet)`] = c.sheet[f.key]
+    r[`${f.label} (ERP)`] = c.itemOk && c.erp ? c.erp[f.key] : ''
+    r[`${f.label} match`] = c.itemOk ? (c.numOff[f.key] ? 'MISMATCH' : 'ok') : ''
+  }
+  r['Department'] = c.itemOk ? (c.deptMissing ? 'MISSING' : c.department) : ''
+  r['Sheet state'] = c.sheetState
+  r['ERP other states'] = c.otherStates.join(', ')
+  r['Issues'] = c.issues.join(', ')
+  return r
 }
 
 function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: ErpLine[]; fetched: boolean }) {
@@ -521,6 +564,11 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
       return next
     })
 
+  // Download exactly what the current tab / chips / search are showing.
+  const doExport = async () => {
+    await exportXlsx([{ name: 'Sheet vs ERP', rows: visible.map(cmpToRow) }], 'sheet-vs-erp.xlsx')
+  }
+
   const columns: VColumn<Cmp>[] = [
     {
       key: 'customer',
@@ -540,14 +588,25 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
         return <span className="mono">{c.item}</span>
       },
     },
-    ...NUM_FIELDS.map(
-      (f): VColumn<Cmp> => ({
-        key: f.key,
-        header: f.label,
-        width: 120,
-        render: (c) => <CmpNumCell ok={c.itemOk} off={c.numOff[f.key]} sheet={c.sheet[f.key]} erp={c.erp ? c.erp[f.key] : 0} />,
-      }),
-    ),
+    ...NUM_FIELDS.flatMap((f): VColumn<Cmp>[] => [
+      {
+        key: `${f.key}_sheet`,
+        header: `${f.label} · sheet`,
+        width: 110,
+        render: (c) => <span className="mono" style={{ color: c.itemOk && c.numOff[f.key] ? 'var(--red)' : undefined }}>{fmt(c.sheet[f.key])}</span>,
+      },
+      {
+        key: `${f.key}_erp`,
+        header: `${f.label} · ERP`,
+        width: 110,
+        render: (c) =>
+          c.itemOk && c.erp ? (
+            <span className="mono" style={{ color: c.numOff[f.key] ? 'var(--red)' : 'var(--green)' }}>{fmt(c.erp[f.key])}</span>
+          ) : (
+            <span className="muted">—</span>
+          ),
+      },
+    ]),
     {
       key: 'department',
       header: 'Department',
@@ -569,9 +628,12 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
 
   return (
     <section className="panel">
-      <h2 style={{ marginTop: 0 }}>
-        SHEET ↔ ERP <span className="hint">each sheet line compared against the ERP data above, within the sheet&apos;s state</span>
-      </h2>
+      <div className="row-flex spread">
+        <h2 style={{ marginTop: 0 }}>
+          SHEET ↔ ERP <span className="hint">each sheet line compared against the ERP data above, within the sheet&apos;s state</span>
+        </h2>
+        {fetched && <button onClick={doExport} disabled={visible.length === 0}>⬇ Export</button>}
+      </div>
 
       {!fetched ? (
         <p className="muted">Load the ERP data above first — this compares every sheet line against it.</p>

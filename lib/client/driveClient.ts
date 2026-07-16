@@ -6,8 +6,9 @@ import type { DriveFile } from '../shared/types'
 
 const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 
-export async function listFiles(): Promise<DriveFile[]> {
-  const res = await fetch('/api/drive/files')
+export async function listFiles(folderId?: string): Promise<DriveFile[]> {
+  const qs = folderId ? `?folderId=${encodeURIComponent(folderId)}` : ''
+  const res = await fetch(`/api/drive/files${qs}`)
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.detail || body.error || `HTTP ${res.status}`)
   return body.files || []

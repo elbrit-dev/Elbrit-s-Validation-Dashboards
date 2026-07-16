@@ -4,7 +4,6 @@
 // create / update / delete runs with pause + resume. All heavy data lives in
 // IndexedDB, so a reload never loses a 30k-row session.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import Link from 'next/link'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import FileBrowser, { type Selected } from '@/components/FileBrowser'
 import VirtualTable, { type VColumn } from '@/components/VirtualTable'
@@ -810,7 +809,6 @@ export default function EntryPage() {
                 {session.phase === 'done' && busy.kind === 'none' && <span className="ok-box small" style={{ margin: 0 }}>Run finished — re-running skips rows already written.</span>}
                 <span style={{ flex: 1 }} />
                 <button onClick={doExport} disabled={isBusy}>⬇ Export results</button>
-                <Link href="/validation"><button disabled={isBusy}>Validation view →</button></Link>
               </div>
             </>
           )}

@@ -5,16 +5,21 @@ import type { DriveFile } from '../shared/types'
 
 export const SHEET_MIME = 'application/vnd.google-apps.spreadsheet'
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+export const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const ACCEPTED = new Set([SHEET_MIME, XLSX_MIME, 'application/vnd.ms-excel', 'text/csv'])
 
-// List the accepted sheet files inside the configured folder.
-export async function listFolderFiles(): Promise<DriveFile[]> {
+// List the accepted sheet files AND sub-folders inside a folder. Folders are
+// kept so the browser can drill into them (sheets are often nested one level
+// deep, e.g. a per-region "Elbrit AP" folder); folderId defaults to the root
+// configured folder.
+export async function listFolderFiles(folderId?: string): Promise<DriveFile[]> {
   if (!driveConfigured()) throw new Error(driveStatusDetail() || 'Google Drive not configured.')
   const { headers, keyParam } = await authFor()
+  const parent = folderId || DRIVE.folderId
   const params = new URLSearchParams({
-    q: `'${DRIVE.folderId}' in parents and trashed = false`,
+    q: `'${parent}' in parents and trashed = false`,
     fields: 'files(id,name,mimeType,modifiedTime,size)',
-    orderBy: 'name',
+    orderBy: 'folder,name', // folders first, then files, each alphabetical
     pageSize: '200',
     supportsAllDrives: 'true',
     includeItemsFromAllDrives: 'true',
@@ -23,7 +28,7 @@ export async function listFolderFiles(): Promise<DriveFile[]> {
   if (!res.ok) throw new Error(`Google Drive list failed: HTTP ${res.status} ${await res.text().catch(() => '')}`)
   const json = await res.json()
   const files = (json.files || []) as DriveFile[]
-  return files.filter((f) => ACCEPTED.has(f.mimeType) || /\.(xlsx|xls|csv)$/i.test(f.name || ''))
+  return files.filter((f) => f.mimeType === FOLDER_MIME || ACCEPTED.has(f.mimeType) || /\.(xlsx|xls|csv)$/i.test(f.name || ''))
 }
 
 // Server-side download fallback (native Google Sheets export, or when the

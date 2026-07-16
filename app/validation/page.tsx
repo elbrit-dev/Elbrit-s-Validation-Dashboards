@@ -2,9 +2,13 @@
 // Validation against the live ERP data.
 //   Table 1 — ERP DATA: the session's customers as posted in ERP (item lines
 //     with the 5 qty/value figures + the auto-mapped department / role / HQ).
-//   Table 2 — SHEET ↔ ERP: every sheet line compared field-by-field against
-//     that ERP data — customer matched, item present, each qty/value, department
-//     missing, and sheet State vs the department's state.
+//     A customer can sell across states (e.g. Divya Pharma in both Telangana and
+//     Chennai); by default we show only the lines whose DEPARTMENT belongs to the
+//     sheet's state, so the Telangana sheet doesn't surface Chennai lines.
+//   Table 2 — SHEET ↔ ERP: every sheet line compared field-by-field against the
+//     ERP data, matched WITHIN the sheet's state — customer matched, item present
+//     in that state, each qty/value, department missing, and (as a distinct flag)
+//     an item that exists in ERP only under a different state.
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import ErrorBoundary from '@/components/ErrorBoundary'
@@ -26,6 +30,24 @@ interface ErpLine {
   custom_hq: string
   custom_department: string
 }
+
+// ---- state derivation ------------------------------------------------------
+// A department ("Elbrit Telangana - ELPL") and the sheet's State column
+// ("TELENGANA ELBRIT") both name a region/state in plain words. Strip the shared
+// boilerplate, keep the meaningful word(s), and canonicalise the spelling
+// variants that mean the same state. Different regions naturally yield different
+// tokens (TELANGANA vs CHENNAI), which is all the comparison needs.
+const STATE_NOISE = new Set(['ELBRIT', 'ELPL', 'ELBR', 'ELB', 'PVT', 'LTD', 'THE', 'DEPARTMENT', 'DEPT', 'TEAM', 'AND', 'OF'])
+const STATE_CANON: Record<string, string> = { TELENGANA: 'TELANGANA', TG: 'TELANGANA', AP: 'ANDHRA', ANDHRAPRADESH: 'ANDHRA' }
+function regionTokens(label: string): string[] {
+  return (label || '')
+    .toUpperCase()
+    .replace(/[^A-Z]+/g, ' ')
+    .split(' ')
+    .filter((w) => w.length > 1 && !STATE_NOISE.has(w))
+    .map((w) => STATE_CANON[w] || w)
+}
+const primaryState = (label: string): string => regionTokens(label)[0] || ''
 
 // The sales-team fields we flag when blank on an ERP line.
 type MissKey = 'custom_department' | 'custom_role_profile' | 'custom_hq'
@@ -51,6 +73,7 @@ export default function ValidationPage() {
   const [selCustomers, setSelCustomers] = useState<Set<string>>(new Set())
   const [missOn, setMissOn] = useState<Set<MissKey>>(new Set())
   const [showCustomers, setShowCustomers] = useState(false)
+  const [onlySheetState, setOnlySheetState] = useState(true)
 
   useEffect(() => {
     ;(async () => {
@@ -71,6 +94,9 @@ export default function ValidationPage() {
     () => [...new Set(rows.filter((r) => r.distStatus === 'ok' && r.resolvedDistributor).map((r) => r.resolvedDistributor as string))].sort(),
     [rows],
   )
+
+  // The state(s) this sheet is for, taken from its State column.
+  const sheetStates = useMemo(() => new Set(rows.map((r) => primaryState(firstValue(r.raw, ['State']))).filter(Boolean)), [rows])
 
   const loadErp = useMemo(
     () => async () => {
@@ -105,12 +131,26 @@ export default function ValidationPage() {
   }, [customers])
 
   // ---- ERP DATA table (table 1) --------------------------------------------
+  // Restrict to the sheet's state(s): keep a line if its department belongs to a
+  // sheet state, or if the department is blank (an unmapped sheet item — still
+  // worth seeing). Lines whose department is another state (e.g. Chennai for a
+  // Telangana sheet) are hidden unless "show all states" is on.
+  const inSheetState = useMemo(
+    () => (l: ErpLine) => !l.custom_department || regionTokens(l.custom_department).some((t) => sheetStates.has(t)),
+    [sheetStates],
+  )
+  const baseErp = useMemo(
+    () => (onlySheetState && sheetStates.size > 0 ? erpRows.filter(inSheetState) : erpRows),
+    [erpRows, onlySheetState, sheetStates, inSheetState],
+  )
+  const hiddenByState = erpRows.length - baseErp.length
+
   const searchPred = useMemo(() => {
     const q = search.trim().toLowerCase()
     return (r: ErpLine) =>
       !q || `${r.customer} ${r.item} ${r.custom_department} ${r.custom_role_profile} ${r.custom_hq}`.toLowerCase().includes(q)
   }, [search])
-  const searched = useMemo(() => erpRows.filter(searchPred), [erpRows, searchPred])
+  const searched = useMemo(() => baseErp.filter(searchPred), [baseErp, searchPred])
   const custCounts = useMemo(() => {
     const m = new Map<string, number>()
     for (const r of searched) m.set(r.customer, (m.get(r.customer) || 0) + 1)
@@ -130,7 +170,7 @@ export default function ValidationPage() {
     if (missOn.size === 0) return afterCust
     return afterCust.filter((r) => [...missOn].some((k) => !r[k]))
   }, [afterCust, missOn])
-  const erpCustomers = useMemo(() => new Set(erpRows.map((r) => r.customer)).size, [erpRows])
+  const erpCustomers = useMemo(() => new Set(baseErp.map((r) => r.customer)).size, [baseErp])
 
   const toggleCustomer = (c: string) =>
     setSelCustomers((prev) => {
@@ -176,14 +216,18 @@ export default function ValidationPage() {
       <div className="kpis">
         <div className="kpi"><div className="label">Customers (sheet)</div><div className="value">{customers.length.toLocaleString()}</div></div>
         <div className="kpi green"><div className="label">Customers found in ERP</div><div className="value">{fetched ? erpCustomers.toLocaleString() : '—'}</div></div>
-        <div className="kpi blue"><div className="label">ERP item lines</div><div className="value">{fetched ? erpRows.length.toLocaleString() : '—'}</div></div>
+        <div className="kpi blue"><div className="label">ERP item lines</div><div className="value">{fetched ? baseErp.length.toLocaleString() : '—'}</div></div>
         <div className="kpi amber"><div className="label">Lines missing sales team</div><div className="value">{fetched ? missingTotal.toLocaleString() : '—'}</div></div>
       </div>
 
       <section className="panel">
         <div className="row-flex spread">
           <h2 style={{ margin: 0 }}>
-            ERP DATA <span className="hint">{customers.length.toLocaleString()} customer(s) from this session, as posted in ERP</span>
+            ERP DATA{' '}
+            <span className="hint">
+              {customers.length.toLocaleString()} customer(s), as posted in ERP
+              {sheetStates.size > 0 && <> · sheet state: {[...sheetStates].join(', ')}</>}
+            </span>
           </h2>
           <div className="row-flex" style={{ gap: 10 }}>
             {error && <span className="small" style={{ color: 'var(--red)' }}>{error}</span>}
@@ -192,6 +236,14 @@ export default function ValidationPage() {
             </button>
           </div>
         </div>
+
+        {sheetStates.size > 0 && (
+          <label className="row-flex small" style={{ gap: 6, marginTop: 10 }} title="A customer can sell in more than one state; keep only the lines whose department is in this sheet's state.">
+            <input type="checkbox" checked={onlySheetState} onChange={(e) => setOnlySheetState(e.target.checked)} />
+            Only this sheet&apos;s state ({[...sheetStates].join(', ')})
+            {onlySheetState && hiddenByState > 0 && <span className="muted">· {hiddenByState.toLocaleString()} other-state line(s) hidden</span>}
+          </label>
+        )}
 
         {fetched && missingTotal > 0 && (
           <div className="warn-box small" style={{ marginTop: 10 }}>
@@ -233,7 +285,7 @@ export default function ValidationPage() {
 
         <div className="row-flex" style={{ margin: '12px 0' }}>
           <input type="text" placeholder="Search customer / item / department / role profile / HQ…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ flex: 1, minWidth: 240 }} />
-          <span className="muted small">{visible.length.toLocaleString()} of {erpRows.length.toLocaleString()} lines</span>
+          <span className="muted small">{visible.length.toLocaleString()} of {baseErp.length.toLocaleString()} lines</span>
         </div>
         <VirtualTable rows={visible} columns={columns} height={520} empty={busy ? 'Loading ERP data…' : fetched ? 'No item lines match the current filters.' : 'Click “Load ERP data”.'} />
       </section>
@@ -244,7 +296,7 @@ export default function ValidationPage() {
 }
 
 // ============================================================================
-// Table 2 — SHEET ↔ ERP comparison
+// Table 2 — SHEET ↔ ERP comparison (state-aware)
 // ============================================================================
 
 type NumKey = 'opening_qty' | 'sales_qty' | 'sales_value' | 'closing_qty' | 'closing_balance'
@@ -262,51 +314,44 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 const near = (a: number, b: number) => Math.abs(round2(a) - round2(b)) < 0.01
 const CMP_SEP = '␟'
 
-// Which state a label belongs to (sheet State column OR a department name).
-const STATE_ALIASES: [string, RegExp][] = [
-  ['TELANGANA', /TELANGANA|TELENGANA|\bTG\b/],
-  ['ANDHRA', /ANDHRA|\bAP\b/],
-]
-const stateToken = (s: string): string => {
-  const up = (s || '').toUpperCase()
-  for (const [canon, re] of STATE_ALIASES) if (re.test(up)) return canon
-  return ''
-}
-
 interface Cmp {
   customer: string
   item: string
   customerOk: boolean
   itemResolved: boolean
-  inErp: boolean
-  itemOk: boolean // customer matched, item resolved AND present in ERP
+  itemOk: boolean // matched in ERP within the sheet's state (qty compare valid)
+  wrongStateOnly: boolean // the item is in ERP, but only under another state
   sheet: Record<NumKey, number>
   erp: Record<NumKey, number> | null
   numOff: Record<NumKey, boolean>
   department: string
   deptMissing: boolean
   sheetState: string
-  deptState: string
-  stateOff: boolean
-  issues: string[] // category keys: 'customer' | 'item' | NumKey | 'department' | 'state'
+  otherStates: string[]
+  issues: string[] // 'customer' | 'item' | NumKey | 'department' | 'state'
 }
 
 function buildCompares(rows: RowRec[], erpRows: ErpLine[]): Cmp[] {
-  // ERP totals per (customer, item).
-  const erpAgg = new Map<string, { nums: Record<NumKey, number>; department: string }>()
+  // ERP totals per (customer, item), split by DEPARTMENT so we can tell which
+  // state each posting belongs to.
+  const erpByCI = new Map<string, Map<string, Record<NumKey, number>>>()
   for (const e of erpRows) {
-    const k = `${e.customer}${CMP_SEP}${e.item}`
-    let a = erpAgg.get(k)
-    if (!a) {
-      a = { nums: zeroNums(), department: '' }
-      erpAgg.set(k, a)
+    const ci = `${e.customer}${CMP_SEP}${e.item}`
+    let g = erpByCI.get(ci)
+    if (!g) {
+      g = new Map()
+      erpByCI.set(ci, g)
     }
-    for (const f of NUM_FIELDS) a.nums[f.key] += e[f.key]
-    if (!a.department && e.custom_department) a.department = e.custom_department
+    const dept = e.custom_department || ''
+    let nums = g.get(dept)
+    if (!nums) {
+      nums = zeroNums()
+      g.set(dept, nums)
+    }
+    for (const f of NUM_FIELDS) nums[f.key] += e[f.key]
   }
 
-  // Sheet totals per displayed (customer, item). 'skip' region SKUs are left out
-  // (they are intentionally never written to ERP).
+  // Sheet totals per (customer, item). 'skip' region SKUs are left out.
   interface SAgg { customer: string; item: string; customerOk: boolean; itemResolved: boolean; erpKey: string; nums: Record<NumKey, number>; state: string }
   const sAgg = new Map<string, SAgg>()
   for (const r of rows) {
@@ -335,39 +380,68 @@ function buildCompares(rows: RowRec[], erpRows: ErpLine[]): Cmp[] {
 
   const out: Cmp[] = []
   for (const s of sAgg.values()) {
-    const erp = s.erpKey ? erpAgg.get(s.erpKey) : undefined
-    const inErp = !!erp
-    const itemOk = s.customerOk && s.itemResolved && inErp
-    const numOff = { opening_qty: false, sales_qty: false, sales_value: false, closing_qty: false, closing_balance: false } as Record<NumKey, boolean>
-    if (itemOk && erp) for (const f of NUM_FIELDS) numOff[f.key] = !near(s.nums[f.key], erp.nums[f.key])
-    const department = erp?.department || ''
-    const deptMissing = itemOk ? !department : false
-    const deptState = stateToken(department)
-    const sheetST = stateToken(s.state)
-    const stateOff = itemOk && !!department && !!deptState && !!sheetST && deptState !== sheetST
+    const sheetToken = primaryState(s.state)
+    const groups = s.erpKey ? erpByCI.get(s.erpKey) : undefined
+
+    // Split the ERP postings for this (customer, item) by state relative to the
+    // sheet: same-state (department matches), unmapped (blank department), and
+    // other-state (a different state's department — e.g. Chennai).
+    const erp = zeroNums()
+    let hasMatch = false
+    let hasUnknown = false
+    let matchDept = ''
+    const otherStates = new Set<string>()
+    if (groups) {
+      for (const [dept, nums] of groups) {
+        if (!dept) {
+          hasUnknown = true
+          for (const f of NUM_FIELDS) erp[f.key] += nums[f.key]
+          continue
+        }
+        const toks = regionTokens(dept)
+        const isMatch = sheetToken ? toks.includes(sheetToken) : true
+        if (isMatch) {
+          hasMatch = true
+          if (!matchDept) matchDept = dept
+          for (const f of NUM_FIELDS) erp[f.key] += nums[f.key]
+        } else {
+          for (const t of toks) otherStates.add(t)
+        }
+      }
+    }
+
+    const inThisState = hasMatch || hasUnknown
+    const itemOk = s.customerOk && s.itemResolved && inThisState
+    const wrongStateOnly = s.customerOk && s.itemResolved && !inThisState && otherStates.size > 0
+    const numOff: Record<NumKey, boolean> = { opening_qty: false, sales_qty: false, sales_value: false, closing_qty: false, closing_balance: false }
+    if (itemOk) for (const f of NUM_FIELDS) numOff[f.key] = !near(s.nums[f.key], erp[f.key])
+    const department = hasMatch ? matchDept : ''
+    const deptMissing = itemOk && !hasMatch // matched only via blank-department lines
+
     const issues: string[] = []
     if (!s.customerOk) issues.push('customer')
-    else if (!itemOk) issues.push('item')
+    else if (!s.itemResolved) issues.push('item')
+    else if (wrongStateOnly) issues.push('state')
+    else if (!inThisState) issues.push('item') // resolved but truly absent from ERP
     else {
       for (const f of NUM_FIELDS) if (numOff[f.key]) issues.push(f.key)
       if (deptMissing) issues.push('department')
-      if (stateOff) issues.push('state')
     }
+
     out.push({
       customer: s.customer,
       item: s.item,
       customerOk: s.customerOk,
       itemResolved: s.itemResolved,
-      inErp,
       itemOk,
+      wrongStateOnly,
       sheet: s.nums,
-      erp: erp ? erp.nums : null,
+      erp: inThisState ? erp : null,
       numOff,
       department,
       deptMissing,
-      sheetState: s.state,
-      deptState,
-      stateOff,
+      sheetState: sheetToken,
+      otherStates: [...otherStates],
       issues,
     })
   }
@@ -375,13 +449,12 @@ function buildCompares(rows: RowRec[], erpRows: ErpLine[]): Cmp[] {
   return out
 }
 
-// The field chips shown in "mismatches by field".
 const CHIP_FIELDS: { key: string; label: string }[] = [
   { key: 'customer', label: 'Customer' },
   { key: 'item', label: 'Item' },
   ...NUM_FIELDS.map((f) => ({ key: f.key, label: f.label })),
   { key: 'department', label: 'Department' },
-  { key: 'state', label: 'State ↔ Dept' },
+  { key: 'state', label: 'Wrong state' },
 ]
 
 function CmpNumCell({ ok, off, sheet, erp }: { ok: boolean; off: boolean; sheet: number; erp: number }) {
@@ -407,7 +480,6 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
     return cmps.filter((c) => `${c.customer} ${c.item} ${c.department} ${c.sheetState}`.toLowerCase().includes(q))
   }, [cmps, search])
 
-  // Field-mismatch counts over the searched set (drive the chips).
   const fieldCounts = useMemo(() => {
     const m: Record<string, number> = {}
     for (const f of CHIP_FIELDS) m[f.key] = 0
@@ -428,7 +500,7 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
       if (c.issues.includes('customer') || c.issues.includes('item')) itemOrCust++
       if (NUM_FIELDS.some((f) => c.numOff[f.key])) numOff++
       if (c.deptMissing) dept++
-      if (c.stateOff) state++
+      if (c.wrongStateOnly) state++
     }
     return { total: searched.length, clean, issues, itemOrCust, numOff, dept, state }
   }, [searched])
@@ -459,15 +531,13 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
     {
       key: 'item',
       header: 'Item',
-      width: 200,
+      width: 210,
       render: (c) => {
         if (!c.customerOk) return <span className="muted">—</span>
-        if (c.itemOk) return <span className="mono">{c.item}</span>
-        return (
-          <span className="mono" style={{ color: 'var(--red)' }} title={c.itemResolved ? 'Resolved but not found in ERP' : 'Item did not match a UAT item'}>
-            {c.item} · {c.itemResolved ? 'not in ERP' : 'not matched'}
-          </span>
-        )
+        if (!c.itemResolved) return <span className="mono" style={{ color: 'var(--red)' }} title="Item did not match a UAT item">{c.item} · not matched</span>
+        if (c.wrongStateOnly) return <span className="mono" style={{ color: 'var(--red)' }} title={`In ERP only under: ${c.otherStates.join(', ')}`}>{c.item} · other state</span>
+        if (!c.itemOk) return <span className="mono" style={{ color: 'var(--red)' }} title="Resolved but not posted in ERP">{c.item} · not in ERP</span>
+        return <span className="mono">{c.item}</span>
       },
     },
     ...NUM_FIELDS.map(
@@ -486,12 +556,12 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
     },
     {
       key: 'state',
-      header: 'State ↔ Dept',
-      width: 150,
+      header: 'State',
+      width: 170,
       render: (c) => {
-        if (!c.itemOk) return <span className="muted">—</span>
-        if (c.stateOff) return <span style={{ color: 'var(--red)' }} title={`sheet ${c.sheetState} vs department ${c.department}`}>✗ {c.sheetState || '?'}≠{c.deptState}</span>
-        if (c.deptState) return <span style={{ color: 'var(--green)' }}>✓ {c.deptState}</span>
+        if (!c.customerOk || !c.itemResolved) return <span className="muted">—</span>
+        if (c.wrongStateOnly) return <span style={{ color: 'var(--red)' }} title={`sheet ${c.sheetState || '?'} · ERP ${c.otherStates.join(', ')}`}>✗ {c.sheetState || '?'} → {c.otherStates.join(', ')}</span>
+        if (c.itemOk && c.sheetState) return <span style={{ color: 'var(--green)' }}>✓ {c.sheetState}</span>
         return <span className="muted">—</span>
       },
     },
@@ -500,7 +570,7 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
   return (
     <section className="panel">
       <h2 style={{ marginTop: 0 }}>
-        SHEET ↔ ERP <span className="hint">each sheet line compared field-by-field against the ERP data above</span>
+        SHEET ↔ ERP <span className="hint">each sheet line compared against the ERP data above, within the sheet&apos;s state</span>
       </h2>
 
       {!fetched ? (
@@ -514,7 +584,7 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
             <div className="kpi red"><div className="label">Item / customer missing</div><div className="value">{stats.itemOrCust.toLocaleString()}</div></div>
             <div className="kpi red"><div className="label">Qty / value mismatch</div><div className="value">{stats.numOff.toLocaleString()}</div></div>
             <div className="kpi amber"><div className="label">Department missing</div><div className="value">{stats.dept.toLocaleString()}</div></div>
-            <div className="kpi red"><div className="label">State mismatch</div><div className="value">{stats.state.toLocaleString()}</div></div>
+            <div className="kpi red"><div className="label">Wrong state</div><div className="value">{stats.state.toLocaleString()}</div></div>
           </div>
 
           <div className="fbar" style={{ marginBottom: 10 }}>

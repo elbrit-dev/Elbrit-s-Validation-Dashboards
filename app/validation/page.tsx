@@ -356,7 +356,8 @@ interface Cmp {
   numOff: Record<NumKey, boolean>
   department: string
   deptMissing: boolean
-  sheetState: string
+  sheetState: string // the state the sheet says this line is for
+  erpState: string // the state derived from the ERP line's department
   otherStates: string[]
   issues: string[] // 'customer' | 'item' | NumKey | 'department' | 'state'
 }
@@ -447,6 +448,9 @@ function buildCompares(rows: RowRec[], erpRows: ErpLine[]): Cmp[] {
     if (itemOk) for (const f of NUM_FIELDS) numOff[f.key] = !near(s.nums[f.key], erp[f.key])
     const department = hasMatch ? matchDept : ''
     const deptMissing = itemOk && !hasMatch // matched only via blank-department lines
+    // The state ERP actually placed this line in: the matched department's state
+    // if it's in the sheet's state, else whatever other state(s) it landed in.
+    const erpState = hasMatch ? primaryState(matchDept) : otherStates.size ? [...otherStates].join(', ') : ''
 
     const issues: string[] = []
     if (!s.customerOk) issues.push('customer')
@@ -471,6 +475,7 @@ function buildCompares(rows: RowRec[], erpRows: ErpLine[]): Cmp[] {
       department,
       deptMissing,
       sheetState: sheetToken,
+      erpState,
       otherStates: [...otherStates],
       issues,
     })
@@ -508,8 +513,9 @@ function cmpToRow(c: Cmp): Record<string, unknown> {
     r[`${f.label} match`] = c.itemOk ? (c.numOff[f.key] ? 'MISMATCH' : 'ok') : ''
   }
   r['Department'] = c.itemOk ? (c.deptMissing ? 'MISSING' : c.department) : ''
-  r['Sheet state'] = c.sheetState
-  r['ERP other states'] = c.otherStates.join(', ')
+  r['State (sheet)'] = c.sheetState
+  r['State (ERP)'] = c.wrongStateOnly ? c.otherStates.join(', ') : c.deptMissing ? 'no dept' : c.erpState
+  r['State match'] = !c.customerOk || !c.itemResolved ? '' : c.wrongStateOnly ? 'WRONG STATE' : c.deptMissing ? 'no dept' : 'ok'
   r['Issues'] = c.issues.join(', ')
   return r
 }
@@ -615,16 +621,23 @@ function SheetErpCompare({ rows, erpRows, fetched }: { rows: RowRec[]; erpRows: 
       key: 'department',
       header: 'Department',
       width: 180,
-      render: (c) => (!c.itemOk ? <span className="muted">—</span> : c.deptMissing ? <span className="pill warning">missing</span> : c.department),
+      render: (c) => (!c.itemOk ? <span className="muted">—</span> : c.deptMissing ? <span className="pill error">missing</span> : c.department),
     },
     {
-      key: 'state',
-      header: 'State',
-      width: 170,
+      key: 'sheetState',
+      header: 'State · sheet',
+      width: 120,
+      render: (c) => (c.sheetState ? c.sheetState : <span className="muted">—</span>),
+    },
+    {
+      key: 'erpState',
+      header: 'State · ERP',
+      width: 160,
       render: (c) => {
         if (!c.customerOk || !c.itemResolved) return <span className="muted">—</span>
-        if (c.wrongStateOnly) return <span style={{ color: 'var(--red)' }} title={`sheet ${c.sheetState || '?'} · ERP ${c.otherStates.join(', ')}`}>✗ {c.sheetState || '?'} → {c.otherStates.join(', ')}</span>
-        if (c.itemOk && c.sheetState) return <span style={{ color: 'var(--green)' }}>✓ {c.sheetState}</span>
+        if (c.wrongStateOnly) return <span style={{ color: 'var(--red)' }} title={`sheet ${c.sheetState || '?'} vs ERP ${c.erpState}`}>✗ {c.erpState || '?'}</span>
+        if (c.deptMissing) return <span className="pill error">no dept</span>
+        if (c.itemOk && c.erpState) return <span style={{ color: 'var(--green)' }}>✓ {c.erpState}</span>
         return <span className="muted">—</span>
       },
     },

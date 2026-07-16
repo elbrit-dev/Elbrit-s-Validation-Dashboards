@@ -91,7 +91,8 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .progress > div { height: 100%; background: var(--accent); transition: width 0.2s; }
 
 .vtable { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-.vtable-head { display: flex; background: var(--panel-2); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12.5px; color: var(--muted); overflow: hidden; }
+.vtable-head { background: var(--panel-2); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12.5px; color: var(--muted); overflow: hidden; }
+.vtable-head-inner { display: flex; }
 .vtable-body { overflow: auto; position: relative; }
 .vtable-row { display: flex; border-bottom: 1px solid rgba(42, 50, 66, 0.5); position: absolute; left: 0; width: 100%; align-items: center; }
 .vtable-row:hover { background: var(--panel-2); cursor: pointer; }

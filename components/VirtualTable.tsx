@@ -46,12 +46,14 @@ export default function VirtualTable<T>({
 
   return (
     <div className="vtable">
-      <div ref={headRef} className="vtable-head" style={{ minWidth: totalWidth }}>
-        {columns.map((c) => (
-          <div key={c.key} className="vcell" style={{ width: c.width }}>
-            {c.header}
-          </div>
-        ))}
+      <div ref={headRef} className="vtable-head">
+        <div className="vtable-head-inner" style={{ minWidth: totalWidth }}>
+          {columns.map((c) => (
+            <div key={c.key} className="vcell" style={{ width: c.width }}>
+              {c.header}
+            </div>
+          ))}
+        </div>
       </div>
       <div ref={parentRef} className="vtable-body" style={{ height }} onScroll={onBodyScroll}>
         {rows.length === 0 ? (

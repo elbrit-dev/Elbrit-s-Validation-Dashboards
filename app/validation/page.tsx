@@ -336,8 +336,12 @@ const NUM_FIELDS: { key: NumKey; label: string }[] = [
 const zeroNums = (): Record<NumKey, number> => ({ opening_qty: 0, sales_qty: 0, sales_value: 0, closing_qty: 0, closing_balance: 0 })
 const childHeaders = (key: string) => CHILD_FIELDS.find((f) => f.key === key)?.sheet ?? []
 const sheetNum = (raw: Record<string, unknown>, key: NumKey) => parseNum(firstValue(raw, childHeaders(key)))
-const round2 = (n: number) => Math.round(n * 100) / 100
-const near = (a: number, b: number) => Math.abs(round2(a) - round2(b)) < 0.01
+// Sheet figures are rounded (usually to whole numbers) while ERP keeps the
+// precise decimals it computed — e.g. sheet 521 vs ERP 520.74, or sheet 453 vs
+// 453.3. Those are the SAME value, only rounded, so treat any difference below 1
+// as a match; a genuine data error differs by whole units. (Thousands-separator
+// commas are already stripped upstream by parseNum, so "1,797" compares as 1797.)
+const near = (a: number, b: number) => Math.abs(a - b) < 1
 const CMP_SEP = '␟'
 
 interface Cmp {

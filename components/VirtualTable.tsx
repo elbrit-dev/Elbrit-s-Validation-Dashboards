@@ -2,7 +2,7 @@
 // One virtualized table for every big list in the app — renders ~40 DOM rows
 // no matter how many items scroll beneath (30k rows stay smooth). Replaces the
 // doctor tool's "showing first 300" caps.
-import { useRef, type ReactNode } from 'react'
+import { useRef, type ReactNode, type UIEvent } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 
 export interface VColumn<T> {
@@ -28,6 +28,7 @@ export default function VirtualTable<T>({
   empty?: string
 }) {
   const parentRef = useRef<HTMLDivElement>(null)
+  const headRef = useRef<HTMLDivElement>(null)
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
@@ -36,16 +37,23 @@ export default function VirtualTable<T>({
   })
   const totalWidth = columns.reduce((s, c) => s + c.width, 0)
 
+  // Keep the header aligned with the body as it scrolls sideways — the two are
+  // separate scroll boxes, so the header would otherwise stay put while the
+  // rows slide under it.
+  const onBodyScroll = (e: UIEvent<HTMLDivElement>) => {
+    if (headRef.current) headRef.current.scrollLeft = e.currentTarget.scrollLeft
+  }
+
   return (
     <div className="vtable">
-      <div className="vtable-head" style={{ minWidth: totalWidth }}>
+      <div ref={headRef} className="vtable-head" style={{ minWidth: totalWidth }}>
         {columns.map((c) => (
           <div key={c.key} className="vcell" style={{ width: c.width }}>
             {c.header}
           </div>
         ))}
       </div>
-      <div ref={parentRef} className="vtable-body" style={{ height }}>
+      <div ref={parentRef} className="vtable-body" style={{ height }} onScroll={onBodyScroll}>
         {rows.length === 0 ? (
           <div className="muted" style={{ padding: 18 }}>{empty}</div>
         ) : (

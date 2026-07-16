@@ -91,10 +91,21 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 .progress > div { height: 100%; background: var(--accent); transition: width 0.2s; }
 
 .vtable { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
-.vtable-head { display: flex; background: var(--panel-2); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12.5px; color: var(--muted); }
+.vtable-head { display: flex; background: var(--panel-2); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 12.5px; color: var(--muted); overflow: hidden; }
 .vtable-body { overflow: auto; position: relative; }
 .vtable-row { display: flex; border-bottom: 1px solid rgba(42, 50, 66, 0.5); position: absolute; left: 0; width: 100%; align-items: center; }
 .vtable-row:hover { background: var(--panel-2); cursor: pointer; }
+
+/* Filter chips (ERP DATA / validation) */
+.fbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.fchip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font-size: 12px; cursor: pointer; }
+.fchip:hover { border-color: var(--accent); }
+.fchip.on { border-color: var(--accent); background: rgba(79, 142, 247, 0.14); }
+.fchip .cnt { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; font-weight: 600; font-size: 11px; min-width: 20px; text-align: center; }
+.fchip.warn { border-color: rgba(232, 163, 61, 0.5); }
+.fchip.warn.on { border-color: var(--amber); background: rgba(232, 163, 61, 0.14); }
+.fchip.warn .cnt { color: var(--amber); }
+.fchip.warn.zero { opacity: 0.55; }
 .vcell { padding: 6px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
 
 .filelist { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow: auto; }

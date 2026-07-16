@@ -58,7 +58,7 @@ export const PARENT_FIELDS: FieldSpec[] = [
 // Child fields — one Secondary Data Table row per product line.
 export const CHILD_FIELDS: FieldSpec[] = [
   { key: 'item',            label: 'Item (Product)', sheet: ['Product', 'Product Code'], erp: 'item',            norm: 'text' },
-  { key: 'opening_qty',     label: 'Op. Qty',        sheet: ['Opening (Qty)'],           erp: 'opening_qty',     norm: 'num' },
+  { key: 'opening_qty',     label: 'Op. Qty',        sheet: ['Opening (Qty)', 'Opening Qty'], erp: 'opening_qty', norm: 'num' },
   { key: 'sales_qty',       label: 'Sec. Qty',       sheet: ['Secondary (Qty)'],         erp: 'sales_qty',       norm: 'num' },
   { key: 'sales_value',     label: 'Sec. Value',     sheet: ['Secondary (Val)'],         erp: 'sales_value',     norm: 'num' },
   { key: 'closing_qty',     label: 'Clos. Qty',      sheet: ['Closing (Qty)'],           erp: 'closing_qty',     norm: 'num' },
